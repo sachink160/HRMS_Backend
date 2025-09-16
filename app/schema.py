@@ -1,6 +1,6 @@
-from pydantic import BaseModel, EmailStr
-from typing import Optional, List
-from datetime import datetime
+from pydantic import BaseModel, EmailStr, field_validator
+from typing import Optional, List, Union
+from datetime import datetime, date
 from app.models import UserRole, LeaveStatus
 
 # User Schemas
@@ -8,6 +8,8 @@ class UserBase(BaseModel):
     email: EmailStr
     name: str
     phone: Optional[str] = None
+    designation: Optional[str] = None
+    joining_date: Optional[date] = None
 
 class UserCreate(UserBase):
     password: str
@@ -15,6 +17,8 @@ class UserCreate(UserBase):
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     phone: Optional[str] = None
+    designation: Optional[str] = None
+    joining_date: Optional[date] = None
 
 class UserResponse(UserBase):
     id: int
@@ -66,14 +70,51 @@ class HolidayBase(BaseModel):
     date: datetime
     title: str
     description: Optional[str] = None
+    is_active: bool = True
 
-class HolidayCreate(HolidayBase):
-    pass
+class HolidayCreate(BaseModel):
+    date: Union[str, datetime]  # Accept both string and datetime
+    title: str
+    description: Optional[str] = None
+    is_active: Optional[bool] = True
+    
+    @field_validator('date')
+    @classmethod
+    def validate_date(cls, v):
+        if isinstance(v, str):
+            try:
+                # Try parsing as date string (YYYY-MM-DD)
+                return datetime.fromisoformat(v)
+            except ValueError:
+                try:
+                    # Try with time component
+                    return datetime.fromisoformat(v + 'T00:00:00')
+                except ValueError:
+                    raise ValueError(f"Invalid date format: {v}. Expected YYYY-MM-DD format.")
+        return v
 
 class HolidayUpdate(BaseModel):
-    date: Optional[datetime] = None
+    date: Optional[Union[str, datetime]] = None  # Accept both string and datetime
     title: Optional[str] = None
     description: Optional[str] = None
+    is_active: Optional[bool] = None
+    
+    @field_validator('date')
+    @classmethod
+    def validate_date(cls, v):
+        if v is None:
+            return v
+        if isinstance(v, str):
+            try:
+                # Try parsing as date string (YYYY-MM-DD)
+                return datetime.fromisoformat(v)
+            except ValueError:
+                try:
+                    # Try with time component
+                    return datetime.fromisoformat(v + 'T00:00:00')
+                except ValueError:
+                    raise ValueError(f"Invalid date format: {v}. Expected YYYY-MM-DD format.")
+        return v
 
 class HolidayResponse(HolidayBase):
     id: int

@@ -6,8 +6,8 @@ from datetime import datetime, date
 from typing import List, Dict, Any
 from app.database import get_db
 from app.models import User, Leave, Holiday, UserTracker, LeaveStatus, UserRole
-from app.schema import UserResponse, LeaveResponse, HolidayResponse, TrackerResponse
-from app.auth import get_current_admin_user
+from app.schema import UserResponse, LeaveResponse, HolidayResponse, TrackerResponse, UserCreate
+from app.auth import get_current_admin_user, get_password_hash
 from app.logger import log_info, log_error
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -59,6 +59,126 @@ async def get_dashboard_stats(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch dashboard statistics"
+        )
+
+@router.post("/users", response_model=UserResponse)
+async def create_user(
+    user_data: UserCreate,
+    role: str = "user",
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Create a new user with specified role (admin only)."""
+    try:
+        # Validate role
+        if role not in [UserRole.USER, UserRole.ADMIN]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid role. Must be 'user' or 'admin'"
+            )
+        
+        # Check if user already exists
+        existing_user = await db.execute(select(User).where(User.email == user_data.email))
+        if existing_user.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+        
+        # Create new user
+        hashed_password = get_password_hash(user_data.password)
+        db_user = User(
+            email=user_data.email,
+            hashed_password=hashed_password,
+            name=user_data.name,
+            phone=user_data.phone,
+            designation=user_data.designation,
+            joining_date=user_data.joining_date,
+            role=role
+        )
+        
+        db.add(db_user)
+        await db.commit()
+        await db.refresh(db_user)
+        
+        log_info(f"New user created: {user_data.email} with role: {role} by admin: {current_user.email}")
+        return db_user
+        
+    except Exception as e:
+        log_error(f"Create user error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create user"
+        )
+
+@router.put("/users/{user_id}", response_model=UserResponse)
+async def update_user(
+    user_id: int,
+    user_data: dict,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Update user information (admin only)."""
+    try:
+        # Get user
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Check if trying to update super admin
+        if user.role == UserRole.SUPER_ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot update super admin user"
+            )
+        
+        # Validate role if provided
+        if 'role' in user_data:
+            if user_data['role'] not in [UserRole.USER, UserRole.ADMIN]:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid role. Must be 'user' or 'admin'"
+                )
+        
+        # Check email uniqueness if email is being updated
+        if 'email' in user_data and user_data['email'] != user.email:
+            existing_user = await db.execute(select(User).where(User.email == user_data['email']))
+            if existing_user.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email already registered"
+                )
+        
+        # Update user fields
+        if 'name' in user_data:
+            user.name = user_data['name']
+        if 'email' in user_data:
+            user.email = user_data['email']
+        if 'phone' in user_data:
+            user.phone = user_data['phone']
+        if 'designation' in user_data:
+            user.designation = user_data['designation']
+        if 'joining_date' in user_data:
+            user.joining_date = user_data['joining_date']
+        if 'role' in user_data:
+            user.role = user_data['role']
+        
+        await db.commit()
+        await db.refresh(user)
+        
+        log_info(f"User {user_id} updated by admin {current_user.email}")
+        return user
+        
+    except Exception as e:
+        log_error(f"Update user error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update user"
         )
 
 @router.get("/users", response_model=List[UserResponse])
@@ -618,6 +738,71 @@ async def promote_user(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to promote user"
+        )
+
+@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: int,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Delete user account (admin only)."""
+    try:
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Check if trying to delete super admin
+        if user.role == UserRole.SUPER_ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot delete super admin user"
+            )
+        
+        # Check if trying to delete own account
+        if user.id == current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot delete your own account"
+            )
+        
+        # Delete related records first
+        # Delete user trackers
+        from app.models import UserTracker
+        trackers_result = await db.execute(
+            select(UserTracker).where(UserTracker.user_id == user_id)
+        )
+        trackers = trackers_result.scalars().all()
+        for tracker in trackers:
+            await db.delete(tracker)
+        
+        # Delete user leaves
+        from app.models import Leave
+        leaves_result = await db.execute(
+            select(Leave).where(Leave.user_id == user_id)
+        )
+        leaves = leaves_result.scalars().all()
+        for leave in leaves:
+            await db.delete(leave)
+        
+        # Delete user
+        await db.delete(user)
+        await db.commit()
+        
+        log_info(f"User {user_id} deleted by admin {current_user.email}")
+        return {"message": "User deleted successfully"}
+        
+    except Exception as e:
+        log_error(f"Delete user error: {str(e)}")
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete user"
         )
 
 @router.get("/reports/leaves")

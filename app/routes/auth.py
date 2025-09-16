@@ -37,6 +37,8 @@ async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
             hashed_password=hashed_password,
             name=user.name,
             phone=user.phone,
+            designation=user.designation,
+            joining_date=user.joining_date,
             role=UserRole.USER  # Default role is USER
         )
         
@@ -116,6 +118,10 @@ async def update_profile(
             current_user.name = user_update.name
         if user_update.phone is not None:
             current_user.phone = user_update.phone
+        if user_update.designation is not None:
+            current_user.designation = user_update.designation
+        if user_update.joining_date is not None:
+            current_user.joining_date = user_update.joining_date
         
         await db.commit()
         await db.refresh(current_user)
@@ -153,6 +159,8 @@ async def register_admin(
             hashed_password=hashed_password,
             name=user.name,
             phone=user.phone,
+            designation=user.designation,
+            joining_date=user.joining_date,
             role=UserRole.ADMIN  # Admin role
         )
         

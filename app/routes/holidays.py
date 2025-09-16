@@ -33,7 +33,8 @@ async def create_holiday(
         db_holiday = Holiday(
             date=holiday.date,
             title=holiday.title,
-            description=holiday.description
+            description=holiday.description,
+            is_active=holiday.is_active if hasattr(holiday, 'is_active') and holiday.is_active is not None else True
         )
         
         db.add(db_holiday)
