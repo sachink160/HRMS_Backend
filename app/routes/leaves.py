@@ -80,15 +80,18 @@ async def get_my_leaves(
 ):
     """Get current user's leave applications."""
     try:
-        result = await db.execute(
-            select(Leave)
-            .where(Leave.user_id == current_user.id)
-            .offset(offset)
-            .limit(limit)
-            .order_by(Leave.created_at.desc())
-        )
-        leaves = result.scalars().all()
-        return leaves
+        from app.database import monitor_query
+        
+        async with monitor_query("get_my_leaves"):
+            result = await db.execute(
+                select(Leave)
+                .where(Leave.user_id == current_user.id)
+                .offset(offset)
+                .limit(limit)
+                .order_by(Leave.created_at.desc())
+            )
+            leaves = result.scalars().all()
+            return leaves
         
     except Exception as e:
         log_error(f"Get my leaves error: {str(e)}")

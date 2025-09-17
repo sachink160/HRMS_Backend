@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, and_
+from sqlalchemy import select, update, and_, func
 from sqlalchemy.orm import selectinload
 from datetime import datetime, date
 from typing import List, Optional
@@ -27,7 +27,7 @@ async def check_in(
             select(UserTracker).where(
                 and_(
                     UserTracker.user_id == current_user.id,
-                    UserTracker.date == today,
+                    func.date(UserTracker.date) == today,
                     UserTracker.check_in.isnot(None)
                 )
             )
@@ -50,7 +50,7 @@ async def check_in(
             select(UserTracker).where(
                 and_(
                     UserTracker.user_id == current_user.id,
-                    UserTracker.date == today
+                    func.date(UserTracker.date) == today
                 )
             )
         )
@@ -96,7 +96,7 @@ async def check_out(
             select(UserTracker).where(
                 and_(
                     UserTracker.user_id == current_user.id,
-                    UserTracker.date == today,
+                    func.date(UserTracker.date) == today,
                     UserTracker.check_in.isnot(None)
                 )
             )
@@ -177,7 +177,7 @@ async def get_today_tracking(
             select(UserTracker).where(
                 and_(
                     UserTracker.user_id == current_user.id,
-                    UserTracker.date == today
+                    func.date(UserTracker.date) == today
                 )
             )
         )
@@ -203,7 +203,7 @@ async def get_today_status(
             select(UserTracker).where(
                 and_(
                     UserTracker.user_id == current_user.id,
-                    UserTracker.date == today
+                    func.date(UserTracker.date) == today
                 )
             )
         )

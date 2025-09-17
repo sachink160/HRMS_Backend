@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, ForeignKey, Enum, Date
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, ForeignKey, Enum, Date, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -34,6 +34,14 @@ class User(Base):
     # Relationships
     leaves = relationship("Leave", back_populates="user")
     trackers = relationship("UserTracker", back_populates="user")
+    
+    # Database indexes for performance optimization
+    __table_args__ = (
+        Index('idx_user_role', 'role'),
+        Index('idx_user_active', 'is_active'),
+        Index('idx_user_created_at', 'created_at'),
+        Index('idx_user_role_active', 'role', 'is_active'),
+    )
 
 class Leave(Base):
     __tablename__ = "leaves"
@@ -49,6 +57,16 @@ class Leave(Base):
     
     # Relationships
     user = relationship("User", back_populates="leaves")
+    
+    # Database indexes for performance optimization
+    __table_args__ = (
+        Index('idx_leave_user_id', 'user_id'),
+        Index('idx_leave_status', 'status'),
+        Index('idx_leave_dates', 'start_date', 'end_date'),
+        Index('idx_leave_user_status', 'user_id', 'status'),
+        Index('idx_leave_created_at', 'created_at'),
+        Index('idx_leave_user_created', 'user_id', 'created_at'),
+    )
 
 class Holiday(Base):
     __tablename__ = "holidays"
@@ -60,6 +78,13 @@ class Holiday(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Database indexes for performance optimization
+    __table_args__ = (
+        Index('idx_holiday_date', 'date'),
+        Index('idx_holiday_active', 'is_active'),
+        Index('idx_holiday_date_active', 'date', 'is_active'),
+    )
 
 class UserTracker(Base):
     __tablename__ = "user_trackers"
@@ -74,3 +99,12 @@ class UserTracker(Base):
     
     # Relationships
     user = relationship("User", back_populates="trackers")
+    
+    # Database indexes for performance optimization
+    __table_args__ = (
+        Index('idx_tracker_user_id', 'user_id'),
+        Index('idx_tracker_date', 'date'),
+        Index('idx_tracker_user_date', 'user_id', 'date'),
+        Index('idx_tracker_check_in', 'check_in'),
+        Index('idx_tracker_user_checkin', 'user_id', 'check_in'),
+    )

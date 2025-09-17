@@ -52,14 +52,17 @@ async def list_users(
 ):
     """List all users (admin only)."""
     try:
-        result = await db.execute(
-            select(User)
-            .offset(offset)
-            .limit(limit)
-            .order_by(User.created_at.desc())
-        )
-        users = result.scalars().all()
-        return users
+        from app.database import monitor_query
+        
+        async with monitor_query("list_users"):
+            result = await db.execute(
+                select(User)
+                .offset(offset)
+                .limit(limit)
+                .order_by(User.created_at.desc())
+            )
+            users = result.scalars().all()
+            return users
         
     except Exception as e:
         log_error(f"List users error: {str(e)}")

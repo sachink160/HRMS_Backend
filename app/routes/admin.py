@@ -19,47 +19,78 @@ async def get_dashboard_stats(
 ):
     """Get dashboard statistics (admin only)."""
     try:
-        # Total users
-        total_users_result = await db.execute(select(func.count(User.id)))
-        total_users = total_users_result.scalar()
+        from app.database import monitor_query
         
-        # Active users (checked in today)
-        today = datetime.now().date()
-        active_users_result = await db.execute(
-            select(func.count(UserTracker.user_id.distinct())).where(
-                and_(
-                    UserTracker.date == today,
-                    UserTracker.check_in.isnot(None)
+        async with monitor_query("dashboard_stats"):
+            today = datetime.now().date()
+            
+            # Initialize default values
+            total_users = 0
+            active_users = 0
+            pending_leaves = 0
+            upcoming_holidays = 0
+            
+            # Get total users (safe)
+            try:
+                total_users_result = await db.execute(select(func.count(User.id)))
+                total_users = total_users_result.scalar() or 0
+            except Exception as e:
+                log_error(f"Error getting total users: {str(e)}")
+            
+            # Get active users today (safe)
+            try:
+                active_users_result = await db.execute(
+                    select(func.count(UserTracker.user_id.distinct())).where(
+                        and_(
+                            func.date(UserTracker.date) == today,
+                            UserTracker.check_in.isnot(None)
+                        )
+                    )
                 )
-            )
-        )
-        active_users = active_users_result.scalar()
-        
-        # Pending leaves
-        pending_leaves_result = await db.execute(
-            select(func.count(Leave.id)).where(Leave.status == LeaveStatus.PENDING)
-        )
-        pending_leaves = pending_leaves_result.scalar()
-        
-        # Upcoming holidays
-        upcoming_holidays_result = await db.execute(
-            select(func.count(Holiday.id)).where(Holiday.date >= today)
-        )
-        upcoming_holidays = upcoming_holidays_result.scalar()
-        
-        return {
-            "total_users": total_users,
-            "active_users_today": active_users,
-            "pending_leaves": pending_leaves,
-            "upcoming_holidays": upcoming_holidays
-        }
+                active_users = active_users_result.scalar() or 0
+            except Exception as e:
+                log_error(f"Error getting active users: {str(e)}")
+                # If UserTracker table doesn't exist, return 0
+            
+            # Get pending leaves (safe)
+            try:
+                pending_leaves_result = await db.execute(
+                    select(func.count(Leave.id)).where(Leave.status == LeaveStatus.PENDING)
+                )
+                pending_leaves = pending_leaves_result.scalar() or 0
+            except Exception as e:
+                log_error(f"Error getting pending leaves: {str(e)}")
+            
+            # Get upcoming holidays (safe)
+            try:
+                upcoming_holidays_result = await db.execute(
+                    select(func.count(Holiday.id)).where(
+                        and_(
+                            func.date(Holiday.date) >= today,
+                            Holiday.is_active == True
+                        )
+                    )
+                )
+                upcoming_holidays = upcoming_holidays_result.scalar() or 0
+            except Exception as e:
+                log_error(f"Error getting upcoming holidays: {str(e)}")
+            
+            return {
+                "total_users": total_users,
+                "active_users_today": active_users,
+                "pending_leaves": pending_leaves,
+                "upcoming_holidays": upcoming_holidays
+            }
         
     except Exception as e:
         log_error(f"Dashboard stats error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch dashboard statistics"
-        )
+        # Return default values instead of throwing error
+        return {
+            "total_users": 0,
+            "active_users_today": 0,
+            "pending_leaves": 0,
+            "upcoming_holidays": 0
+        }
 
 @router.post("/users", response_model=UserResponse)
 async def create_user(
