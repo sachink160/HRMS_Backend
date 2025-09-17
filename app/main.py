@@ -1,11 +1,13 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import create_async_engine
 from app.database import engine
 from app.models import Base
 from app.routes import auth, users, leaves, holidays, trackers, admin
 from app.logger import log_info, log_error
+import os
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -50,6 +52,11 @@ app.include_router(leaves.router)
 app.include_router(holidays.router)
 app.include_router(trackers.router)
 app.include_router(admin.router)
+
+# Mount static files for uploaded documents
+if not os.path.exists("uploads"):
+    os.makedirs("uploads")
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 @app.get("/")
 async def root():

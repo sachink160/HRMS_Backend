@@ -16,6 +16,11 @@ class LeaveStatus(str, enum.Enum):
     APPROVED = "approved"
     REJECTED = "rejected"
 
+class DocumentStatus(str, enum.Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
 class User(Base):
     __tablename__ = "users"
     
@@ -28,6 +33,19 @@ class User(Base):
     joining_date = Column(Date, nullable=True)  # Employee joining date
     role = Column(Enum(UserRole), default=UserRole.USER, nullable=False)
     is_active = Column(Boolean, default=True)
+    
+    # Identity document fields
+    profile_image = Column(String, nullable=True)  # Profile image file path
+    aadhaar_front = Column(String, nullable=True)  # Aadhaar front image file path
+    aadhaar_back = Column(String, nullable=True)  # Aadhaar back image file path
+    pan_image = Column(String, nullable=True)  # PAN image file path
+    
+    # Identity document statuses
+    profile_image_status = Column(Enum(DocumentStatus), default=DocumentStatus.PENDING, nullable=True)
+    aadhaar_front_status = Column(Enum(DocumentStatus), default=DocumentStatus.PENDING, nullable=True)
+    aadhaar_back_status = Column(Enum(DocumentStatus), default=DocumentStatus.PENDING, nullable=True)
+    pan_image_status = Column(Enum(DocumentStatus), default=DocumentStatus.PENDING, nullable=True)
+    
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     

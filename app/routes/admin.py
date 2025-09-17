@@ -1,16 +1,203 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
+from fastapi import UploadFile, File
+from pathlib import Path
+import uuid
 from sqlalchemy.orm import selectinload
 from datetime import datetime, date
 from typing import List, Dict, Any
 from app.database import get_db
-from app.models import User, Leave, Holiday, UserTracker, LeaveStatus, UserRole
+from app.models import User, Leave, Holiday, UserTracker, LeaveStatus, UserRole, DocumentStatus
 from app.schema import UserResponse, LeaveResponse, HolidayResponse, TrackerResponse, UserCreate
-from app.auth import get_current_admin_user, get_password_hash
+from app.auth import get_current_admin_user, get_password_hash, get_current_super_admin_user
 from app.logger import log_info, log_error
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+# Helpers for file upload (duplicate of users router helpers)
+UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR.mkdir(exist_ok=True)
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
+MAX_FILE_SIZE = 10 * 1024 * 1024
+
+def _validate_file(file: UploadFile) -> bool:
+    if not file.filename:
+        return False
+    ext = Path(file.filename).suffix.lower()
+    return ext in ALLOWED_EXTENSIONS
+
+async def _save_uploaded_file(file: UploadFile, user_id: int, document_type: str) -> str:
+    if not _validate_file(file):
+        raise HTTPException(status_code=400, detail="Invalid file type. Only JPG, PNG, and PDF files are allowed.")
+    ext = Path(file.filename).suffix.lower()
+    unique_filename = f"{user_id}_{document_type}_{uuid.uuid4()}{ext}"
+    file_path = UPLOAD_DIR / unique_filename
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="File size too large. Maximum size is 10MB.")
+    with open(file_path, "wb") as f:
+        f.write(content)
+    return str(file_path)
+
+# Super admin can upload documents for any user
+@router.post("/users/{user_id}/upload-profile-image")
+async def admin_upload_profile_image(
+    user_id: int,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_super_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        result = await db.execute(select(User).where(User.id == user_id))
+        target_user = result.scalar_one_or_none()
+        if not target_user:
+            raise HTTPException(status_code=404, detail="User not found")
+        file_path = await _save_uploaded_file(file, user_id, "profile")
+        target_user.profile_image = file_path
+        target_user.profile_image_status = DocumentStatus.APPROVED
+        await db.commit()
+        return {"file_path": file_path}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Admin upload profile image error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to upload profile image")
+
+@router.post("/users/{user_id}/upload-aadhaar-front")
+async def admin_upload_aadhaar_front(
+    user_id: int,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_super_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        result = await db.execute(select(User).where(User.id == user_id))
+        target_user = result.scalar_one_or_none()
+        if not target_user:
+            raise HTTPException(status_code=404, detail="User not found")
+        file_path = await _save_uploaded_file(file, user_id, "aadhaar_front")
+        target_user.aadhaar_front = file_path
+        target_user.aadhaar_front_status = DocumentStatus.APPROVED
+        await db.commit()
+        return {"file_path": file_path}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Admin upload aadhaar front error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to upload Aadhaar front")
+
+@router.post("/users/{user_id}/upload-aadhaar-back")
+async def admin_upload_aadhaar_back(
+    user_id: int,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_super_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        result = await db.execute(select(User).where(User.id == user_id))
+        target_user = result.scalar_one_or_none()
+        if not target_user:
+            raise HTTPException(status_code=404, detail="User not found")
+        file_path = await _save_uploaded_file(file, user_id, "aadhaar_back")
+        target_user.aadhaar_back = file_path
+        target_user.aadhaar_back_status = DocumentStatus.APPROVED
+        await db.commit()
+        return {"file_path": file_path}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Admin upload aadhaar back error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to upload Aadhaar back")
+
+@router.post("/users/{user_id}/upload-pan")
+async def admin_upload_pan(
+    user_id: int,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_super_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        result = await db.execute(select(User).where(User.id == user_id))
+        target_user = result.scalar_one_or_none()
+        if not target_user:
+            raise HTTPException(status_code=404, detail="User not found")
+        file_path = await _save_uploaded_file(file, user_id, "pan")
+        target_user.pan_image = file_path
+        target_user.pan_image_status = DocumentStatus.APPROVED
+        await db.commit()
+        return {"file_path": file_path}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Admin upload pan error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to upload PAN")
+# Document approval endpoints (super admin only)
+@router.put("/users/{user_id}/documents/{doc_type}/approve")
+async def approve_document(
+    user_id: int,
+    doc_type: str,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        user_result = await db.execute(select(User).where(User.id == user_id))
+        user = user_result.scalar_one_or_none()
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+        doc_type = doc_type.lower()
+        if doc_type == "profile":
+            user.profile_image_status = DocumentStatus.APPROVED
+        elif doc_type == "aadhaar_front":
+            user.aadhaar_front_status = DocumentStatus.APPROVED
+        elif doc_type == "aadhaar_back":
+            user.aadhaar_back_status = DocumentStatus.APPROVED
+        elif doc_type == "pan":
+            user.pan_image_status = DocumentStatus.APPROVED
+        else:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid document type")
+
+        await db.commit()
+        return {"status": "approved"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Approve document error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to approve document")
+
+@router.put("/users/{user_id}/documents/{doc_type}/reject")
+async def reject_document(
+    user_id: int,
+    doc_type: str,
+    reason: str | None = None,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        user_result = await db.execute(select(User).where(User.id == user_id))
+        user = user_result.scalar_one_or_none()
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+        doc_type = doc_type.lower()
+        if doc_type == "profile":
+            user.profile_image_status = DocumentStatus.REJECTED
+        elif doc_type == "aadhaar_front":
+            user.aadhaar_front_status = DocumentStatus.REJECTED
+        elif doc_type == "aadhaar_back":
+            user.aadhaar_back_status = DocumentStatus.REJECTED
+        elif doc_type == "pan":
+            user.pan_image_status = DocumentStatus.REJECTED
+        else:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid document type")
+
+        await db.commit()
+        return {"status": "rejected", "reason": reason}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Reject document error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to reject document")
 
 @router.get("/dashboard")
 async def get_dashboard_stats(
@@ -195,10 +382,37 @@ async def update_user(
         if 'designation' in user_data:
             user.designation = user_data['designation']
         if 'joining_date' in user_data:
-            user.joining_date = user_data['joining_date']
+            jd = user_data['joining_date']
+            try:
+                if isinstance(jd, str) and jd:
+                    # Accept formats like 'YYYY-MM-DD' or ISO datetime
+                    try:
+                        parsed = datetime.strptime(jd, "%Y-%m-%d").date()
+                    except ValueError:
+                        parsed = datetime.fromisoformat(jd).date()
+                    user.joining_date = parsed
+                elif isinstance(jd, date):
+                    user.joining_date = jd
+                elif jd in (None, ""):
+                    user.joining_date = None
+            except Exception as e:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid joining_date format. Expected YYYY-MM-DD"
+                )
         if 'role' in user_data:
             user.role = user_data['role']
-        
+
+        # Final safeguard: ensure joining_date is a date object before committing
+        try:
+            if isinstance(user.joining_date, str):
+                try:
+                    user.joining_date = datetime.strptime(user.joining_date, "%Y-%m-%d").date()
+                except ValueError:
+                    user.joining_date = datetime.fromisoformat(user.joining_date).date()
+        except Exception:
+            pass
+
         await db.commit()
         await db.refresh(user)
         

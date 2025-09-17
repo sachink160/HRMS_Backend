@@ -1,7 +1,7 @@
 from pydantic import BaseModel, EmailStr, field_validator
 from typing import Optional, List, Union
 from datetime import datetime, date
-from app.models import UserRole, LeaveStatus
+from app.models import UserRole, LeaveStatus, DocumentStatus
 
 # User Schemas
 class UserBase(BaseModel):
@@ -19,11 +19,26 @@ class UserUpdate(BaseModel):
     phone: Optional[str] = None
     designation: Optional[str] = None
     joining_date: Optional[date] = None
+    profile_image: Optional[str] = None
+    aadhaar_front: Optional[str] = None
+    aadhaar_back: Optional[str] = None
+    pan_image: Optional[str] = None
+    # When user updates a file, status will be set to pending in backend
 
 class UserResponse(UserBase):
     id: int
     role: UserRole
     is_active: bool
+    # Document paths
+    profile_image: Optional[str] = None
+    aadhaar_front: Optional[str] = None
+    aadhaar_back: Optional[str] = None
+    pan_image: Optional[str] = None
+    # Document statuses
+    profile_image_status: Optional[DocumentStatus] = None
+    aadhaar_front_status: Optional[DocumentStatus] = None
+    aadhaar_back_status: Optional[DocumentStatus] = None
+    pan_image_status: Optional[DocumentStatus] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
     
@@ -142,6 +157,13 @@ class TrackerResponse(TrackerBase):
     
     class Config:
         from_attributes = True
+
+# File Upload Schemas
+class FileUploadResponse(BaseModel):
+    filename: str
+    file_path: str
+    file_size: int
+    content_type: str
 
 # Pagination Schema
 class PaginationParams(BaseModel):
