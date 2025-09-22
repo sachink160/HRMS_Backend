@@ -31,6 +31,8 @@ class User(Base):
     phone = Column(String, nullable=True)
     designation = Column(String, nullable=True)  # Employee designation/position
     joining_date = Column(Date, nullable=True)  # Employee joining date
+    # External systems linkage
+    wifi_user_id = Column(String, nullable=True, index=True)  # Optional WiFi portal user identifier
     role = Column(Enum(UserRole), default=UserRole.USER, nullable=False)
     is_active = Column(Boolean, default=True)
     

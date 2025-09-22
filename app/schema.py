@@ -10,6 +10,7 @@ class UserBase(BaseModel):
     phone: Optional[str] = None
     designation: Optional[str] = None
     joining_date: Optional[date] = None
+    wifi_user_id: Optional[str] = None
 
 class UserCreate(UserBase):
     password: str
@@ -19,6 +20,7 @@ class UserUpdate(BaseModel):
     phone: Optional[str] = None
     designation: Optional[str] = None
     joining_date: Optional[date] = None
+    wifi_user_id: Optional[str] = None
     profile_image: Optional[str] = None
     aadhaar_front: Optional[str] = None
     aadhaar_back: Optional[str] = None

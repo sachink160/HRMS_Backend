@@ -12,6 +12,7 @@ from app.auth import (
     create_access_token, 
     get_current_user,
     get_current_super_admin_user,
+    get_user_by_email,
     ACCESS_TOKEN_EXPIRE_MINUTES
 )
 from app.logger import log_info, log_error
@@ -60,6 +61,23 @@ async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
 async def login(login_data: UserLogin, db: AsyncSession = Depends(get_db)):
     """Login user and return access token with user data."""
     try:
+        # First check if user exists and is active
+        user = await get_user_by_email(db, login_data.email)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Account is deactivated. Please contact administrator.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        # Now authenticate with password
         user = await authenticate_user(db, login_data.email, login_data.password)
         if not user:
             raise HTTPException(

@@ -51,13 +51,32 @@ async def run_migration():
         """)
         print("✅ is_active column added/updated on holidays!")
         
+        # Add wifi_user_id column to users
+        print("📝 Adding wifi_user_id column to users...")
+        await conn.execute("""
+            ALTER TABLE users 
+            ADD COLUMN IF NOT EXISTS wifi_user_id VARCHAR(255) NULL
+        """)
+        # Add index for wifi_user_id
+        await conn.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_indexes WHERE tablename = 'users' AND indexname = 'ix_users_wifi_user_id'
+                ) THEN
+                    CREATE INDEX ix_users_wifi_user_id ON users (wifi_user_id);
+                END IF;
+            END$$;
+        """)
+        print("✅ wifi_user_id column (and index) added!")
+
         # Verify columns exist
         print("🔍 Verifying columns...")
         columns = await conn.fetch("""
             SELECT column_name, data_type 
             FROM information_schema.columns 
             WHERE table_name = 'users' 
-            AND column_name IN ('designation', 'joining_date')
+            AND column_name IN ('designation', 'joining_date', 'wifi_user_id')
             ORDER BY column_name
         """)
         

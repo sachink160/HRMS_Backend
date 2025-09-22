@@ -51,6 +51,8 @@ async def authenticate_user(db: AsyncSession, email: str, password: str) -> Opti
         return None
     if not verify_password(password, user.hashed_password):
         return None
+    if not user.is_active:
+        return None
     return user
 
 async def get_current_user(
