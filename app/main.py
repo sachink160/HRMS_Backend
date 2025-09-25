@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import create_async_engine
 from app.database import engine
 from app.models import Base
-from app.routes import auth, users, leaves, holidays, trackers, admin
+from app.routes import auth, users, leaves, holidays, trackers, admin, email
 from app.logger import log_info, log_error
 import os
 
@@ -52,6 +52,7 @@ app.include_router(leaves.router)
 app.include_router(holidays.router)
 app.include_router(trackers.router)
 app.include_router(admin.router)
+app.include_router(email.router)
 
 # Mount static files for uploaded documents
 if not os.path.exists("uploads"):

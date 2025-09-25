@@ -128,3 +128,63 @@ class UserTracker(Base):
         Index('idx_tracker_check_in', 'check_in'),
         Index('idx_tracker_user_checkin', 'user_id', 'check_in'),
     )
+
+class EmailSettings(Base):
+    __tablename__ = "email_settings"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    smtp_server = Column(String, nullable=False)
+    smtp_port = Column(Integer, nullable=False)
+    smtp_username = Column(String, nullable=False)
+    smtp_password = Column(String, nullable=False)  # Should be encrypted in production
+    smtp_use_tls = Column(Boolean, default=True)
+    smtp_use_ssl = Column(Boolean, default=False)
+    from_email = Column(String, nullable=False)
+    from_name = Column(String, nullable=False)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Database indexes for performance optimization
+    __table_args__ = (
+        Index('idx_email_settings_active', 'is_active'),
+    )
+
+class EmailTemplate(Base):
+    __tablename__ = "email_templates"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, unique=True)
+    subject = Column(String, nullable=False)
+    body = Column(Text, nullable=False)
+    template_type = Column(String, nullable=False)  # e.g., 'welcome', 'leave_approval', 'leave_rejection', etc.
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Database indexes for performance optimization
+    __table_args__ = (
+        Index('idx_email_template_type', 'template_type'),
+        Index('idx_email_template_active', 'is_active'),
+    )
+
+class EmailLog(Base):
+    __tablename__ = "email_logs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    recipient_email = Column(String, nullable=False)
+    recipient_name = Column(String, nullable=True)
+    subject = Column(String, nullable=False)
+    template_type = Column(String, nullable=True)
+    status = Column(String, nullable=False)  # 'sent', 'failed', 'pending'
+    error_message = Column(Text, nullable=True)
+    sent_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Database indexes for performance optimization
+    __table_args__ = (
+        Index('idx_email_log_recipient', 'recipient_email'),
+        Index('idx_email_log_status', 'status'),
+        Index('idx_email_log_template', 'template_type'),
+        Index('idx_email_log_created', 'created_at'),
+    )

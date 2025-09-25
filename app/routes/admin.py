@@ -694,21 +694,90 @@ async def create_bulk_holidays(
         created_holidays = []
         
         for holiday_data in holidays:
-            # Check if holiday already exists
-            existing_holiday = await db.execute(
-                select(Holiday).where(Holiday.date == holiday_data["date"])
-            )
-            if existing_holiday.scalar_one_or_none():
-                continue  # Skip if already exists
-            
-            # Create holiday
-            db_holiday = Holiday(
-                date=holiday_data["date"],
-                title=holiday_data["title"],
-                description=holiday_data.get("description")
-            )
-            db.add(db_holiday)
-            created_holidays.append(db_holiday)
+            try:
+                # Convert date string to datetime if needed
+                date_value = holiday_data["date"]
+                if isinstance(date_value, str):
+                    from datetime import datetime
+                    
+                    # Try parsing with different formats
+                    date_formats = [
+                        '%Y-%m-%d',      # YYYY-MM-DD
+                        '%m/%d/%Y',      # MM/DD/YYYY
+                        '%d/%m/%Y',      # DD/MM/YYYY
+                        '%m-%d-%Y',      # MM-DD-YYYY
+                        '%d-%m-%Y',      # DD-MM-YYYY
+                        '%Y/%m/%d',      # YYYY/MM/DD
+                        '%d.%m.%Y',      # DD.MM.YYYY
+                        '%m.%d.%Y',      # MM.DD.YYYY
+                        '%Y.%m.%d',      # YYYY.MM.DD
+                    ]
+                    
+                    parsed_date = None
+                    for fmt in date_formats:
+                        try:
+                            parsed_date = datetime.strptime(date_value.strip(), fmt)
+                            break
+                        except ValueError:
+                            continue
+                    
+                    if not parsed_date:
+                        # Try parsing with different separators and order combinations
+                        separators = ['-', '/', '.', ' ']
+                        for sep in separators:
+                            if sep in date_value:
+                                parts = date_value.split(sep)
+                                if len(parts) == 3:
+                                    # Try different order combinations
+                                    combinations = [
+                                        (parts[0], parts[1], parts[2]),  # Original order
+                                        (parts[2], parts[0], parts[1]),  # YYYY-MM-DD
+                                        (parts[2], parts[1], parts[0]),  # YYYY-DD-MM
+                                    ]
+                                    
+                                    for year, month, day in combinations:
+                                        try:
+                                            # Ensure proper padding
+                                            year = year.zfill(4)
+                                            month = month.zfill(2)
+                                            day = day.zfill(2)
+                                            
+                                            # Validate year range
+                                            if 1900 <= int(year) <= 2100:
+                                                parsed_date = datetime.strptime(f"{year}-{month}-{day}", '%Y-%m-%d')
+                                                break
+                                        except ValueError:
+                                            continue
+                                    if parsed_date:
+                                        break
+                    
+                    if not parsed_date:
+                        log_error(f"Invalid date format: {date_value}")
+                        continue
+                    
+                    holiday_data["date"] = parsed_date
+                
+                # Check if holiday already exists
+                existing_holiday = await db.execute(
+                    select(Holiday).where(Holiday.date == holiday_data["date"])
+                )
+                if existing_holiday.scalar_one_or_none():
+                    log_info(f"Holiday already exists for date {holiday_data['date']}, skipping")
+                    continue
+                
+                # Create holiday
+                db_holiday = Holiday(
+                    date=holiday_data["date"],
+                    title=holiday_data["title"],
+                    description=holiday_data.get("description"),
+                    is_active=holiday_data.get("is_active", True)
+                )
+                db.add(db_holiday)
+                created_holidays.append(db_holiday)
+                
+            except Exception as e:
+                log_error(f"Error processing holiday {holiday_data}: {str(e)}")
+                continue
         
         await db.commit()
         
