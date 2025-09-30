@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, text
 from fastapi import UploadFile, File
 from pathlib import Path
 import uuid
@@ -8,12 +8,60 @@ from sqlalchemy.orm import selectinload
 from datetime import datetime, date
 from typing import List, Dict, Any
 from app.database import get_db
-from app.models import User, Leave, Holiday, UserTracker, LeaveStatus, UserRole, DocumentStatus
-from app.schema import UserResponse, LeaveResponse, HolidayResponse, TrackerResponse, UserCreate
+from app.models import User, Leave, Holiday, LeaveStatus, UserRole, DocumentStatus, EmployeeDetails, EmploymentHistory
+from app.schema import (
+    UserResponse, LeaveResponse, HolidayResponse, TrackerResponse, UserCreate,
+    EmployeeDetailsResponse, EmploymentHistoryResponse, EmployeeSummary, EnhancedTrackerResponse,
+    EmployeeDetailsCreate, EmployeeDetailsUpdate, EmploymentHistoryCreate
+)
 from app.auth import get_current_admin_user, get_password_hash, get_current_super_admin_user
 from app.logger import log_info, log_error
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+async def safe_get_employee_details(db: AsyncSession, user_id: int):
+    """Safely get employee details, handling missing columns gracefully."""
+    try:
+        # Try to get employee details using ORM
+        from app.models import EmployeeDetails
+        result = await db.execute(
+            select(EmployeeDetails).where(EmployeeDetails.user_id == user_id)
+        )
+        return result.scalar_one_or_none()
+    except Exception as e:
+        from app.logger import log_error
+        log_error(f"Error fetching employee details for user {user_id}: {str(e)}")
+        # If there's a schema mismatch, try to get basic info using raw SQL
+        try:
+            result = await db.execute(text("""
+                SELECT id, user_id, employee_id, department, manager_id, 
+                       employment_type, work_location, work_schedule, 
+                       basic_salary, currency, is_active, created_at, updated_at
+                FROM employee_details 
+                WHERE user_id = :user_id
+            """), {"user_id": user_id})
+            row = result.fetchone()
+            if row:
+                # Create a minimal EmployeeDetails object with available fields
+                from app.models import EmployeeDetails
+                details = EmployeeDetails()
+                details.id = row[0]
+                details.user_id = row[1]
+                details.employee_id = row[2]
+                details.department = row[3]
+                details.manager_id = row[4]
+                details.employment_type = row[5]
+                details.work_location = row[6]
+                details.work_schedule = row[7]
+                details.basic_salary = row[8]
+                details.currency = row[9]
+                details.is_active = row[10]
+                details.created_at = row[11]
+                details.updated_at = row[12]
+                return details
+        except Exception as e2:
+            log_error(f"Error fetching employee details with raw SQL for user {user_id}: {str(e2)}")
+        return None
 # Helpers for file upload (duplicate of users router helpers)
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -224,20 +272,8 @@ async def get_dashboard_stats(
             except Exception as e:
                 log_error(f"Error getting total users: {str(e)}")
             
-            # Get active users today (safe)
-            try:
-                active_users_result = await db.execute(
-                    select(func.count(UserTracker.user_id.distinct())).where(
-                        and_(
-                            func.date(UserTracker.date) == today,
-                            UserTracker.check_in.isnot(None)
-                        )
-                    )
-                )
-                active_users = active_users_result.scalar() or 0
-            except Exception as e:
-                log_error(f"Error getting active users: {str(e)}")
-                # If UserTracker table doesn't exist, return 0
+            # Get active users today (tracking disabled)
+            active_users = 0
             
             # Get pending leaves (safe)
             try:
@@ -358,10 +394,10 @@ async def update_user(
         
         # Validate role if provided
         if 'role' in user_data:
-            if user_data['role'] not in [UserRole.USER, UserRole.ADMIN]:
+            if user_data['role'] not in [UserRole.USER, UserRole.ADMIN, UserRole.SUPER_ADMIN]:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid role. Must be 'user' or 'admin'"
+                    detail="Invalid role. Must be 'user', 'admin', or 'super_admin'"
                 )
         
         # Check email uniqueness if email is being updated
@@ -404,7 +440,17 @@ async def update_user(
         if 'wifi_user_id' in user_data:
             user.wifi_user_id = user_data['wifi_user_id'] or None
         if 'role' in user_data:
-            user.role = user_data['role']
+            # Convert string role to enum if needed
+            if isinstance(user_data['role'], str):
+                try:
+                    user.role = UserRole(user_data['role'])
+                except ValueError:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Invalid role value: {user_data['role']}"
+                    )
+            else:
+                user.role = user_data['role']
 
         # Final safeguard: ensure joining_date is a date object before committing
         try:
@@ -485,37 +531,6 @@ async def get_all_leaves(
             detail="Failed to fetch leaves"
         )
 
-@router.get("/tracking", response_model=List[TrackerResponse])
-async def get_all_tracking(
-    offset: int = 0,
-    limit: int = 10,
-    date_filter: str = None,
-    current_user: User = Depends(get_current_admin_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Get all tracking records with optional date filter (admin only)."""
-    try:
-        query = select(UserTracker).options(selectinload(UserTracker.user))
-        
-        if date_filter:
-            filter_date = datetime.strptime(date_filter, "%Y-%m-%d").date()
-            query = query.where(UserTracker.date == filter_date)
-        
-        result = await db.execute(
-            query
-            .offset(offset)
-            .limit(limit)
-            .order_by(UserTracker.date.desc())
-        )
-        trackers = result.scalars().all()
-        return trackers
-        
-    except Exception as e:
-        log_error(f"Get all tracking error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch tracking records"
-        )
 
 @router.get("/user/{user_id}/summary")
 async def get_user_summary(
@@ -541,14 +556,8 @@ async def get_user_summary(
         )
         leaves = leaves_result.scalars().all()
         
-        # Get user's recent tracking
-        tracking_result = await db.execute(
-            select(UserTracker)
-            .where(UserTracker.user_id == user_id)
-            .order_by(UserTracker.date.desc())
-            .limit(30)
-        )
-        tracking = tracking_result.scalars().all()
+        # Tracking disabled
+        tracking = []
         
         # Calculate stats
         total_leaves = len(leaves)
@@ -795,55 +804,6 @@ async def create_bulk_holidays(
             detail="Failed to create bulk holidays"
         )
 
-@router.get("/reports/attendance")
-async def get_attendance_report(
-    start_date: str = None,
-    end_date: str = None,
-    current_user: User = Depends(get_current_admin_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Get attendance report for date range (admin only)."""
-    try:
-        query = select(UserTracker).options(selectinload(UserTracker.user))
-        
-        if start_date and end_date:
-            start = datetime.strptime(start_date, "%Y-%m-%d").date()
-            end = datetime.strptime(end_date, "%Y-%m-%d").date()
-            query = query.where(
-                and_(
-                    UserTracker.date >= start,
-                    UserTracker.date <= end
-                )
-            )
-        
-        result = await db.execute(query.order_by(UserTracker.date.desc()))
-        trackers = result.scalars().all()
-        
-        # Group by user
-        user_attendance = {}
-        for tracker in trackers:
-            user_id = tracker.user_id
-            if user_id not in user_attendance:
-                user_attendance[user_id] = {
-                    "user": tracker.user,
-                    "records": []
-                }
-            user_attendance[user_id]["records"].append(tracker)
-        
-        return {
-            "period": {
-                "start_date": start_date,
-                "end_date": end_date
-            },
-            "attendance": list(user_attendance.values())
-        }
-        
-    except Exception as e:
-        log_error(f"Get attendance report error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to generate attendance report"
-        )
 
 @router.get("/holidays", response_model=List[HolidayResponse])
 async def get_all_holidays_admin(
@@ -1089,14 +1049,7 @@ async def delete_user(
             )
         
         # Delete related records first
-        # Delete user trackers
-        from app.models import UserTracker
-        trackers_result = await db.execute(
-            select(UserTracker).where(UserTracker.user_id == user_id)
-        )
-        trackers = trackers_result.scalars().all()
-        for tracker in trackers:
-            await db.delete(tracker)
+        # Tracking disabled - no trackers to delete
         
         # Delete user leaves
         from app.models import Leave
@@ -1176,3 +1129,504 @@ async def get_leaves_report(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to generate leaves report"
         )
+
+# Employee Management Endpoints for Admin
+@router.post("/employees/{user_id}/details", response_model=EmployeeDetailsResponse)
+async def admin_create_employee_details(
+    user_id: int,
+    employee_data: EmployeeDetailsCreate,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Create employee details for a user (admin only)."""
+    try:
+        # Security: Validate user_id is positive integer
+        if user_id <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid user ID"
+            )
+        
+        # Check if user exists and is active
+        user_result = await db.execute(
+            select(User).where(and_(User.id == user_id, User.is_active == True))
+        )
+        user = user_result.scalar_one_or_none()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Active user not found"
+            )
+        
+        # Security: Prevent admin from creating details for other admins/super_admins
+        if user.role in ['admin', 'super_admin'] and current_user.role != 'super_admin':
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot create employee details for admin users"
+            )
+        
+        # Check if employee details already exist
+        existing_details = await db.execute(
+            select(EmployeeDetails).where(EmployeeDetails.user_id == user_id)
+        )
+        if existing_details.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Employee details already exist for this user"
+            )
+        
+        # Validate manager_id if provided
+        if employee_data.manager_id:
+            manager_result = await db.execute(
+                select(User).where(and_(User.id == employee_data.manager_id, User.is_active == True))
+            )
+            manager = manager_result.scalar_one_or_none()
+            if not manager:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid manager ID"
+                )
+            # Prevent circular manager relationships
+            if employee_data.manager_id == user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="User cannot be their own manager"
+                )
+        
+        # Create employee details with validated data
+        employee_details = EmployeeDetails(user_id=user_id, **employee_data.dict())
+        db.add(employee_details)
+        await db.commit()
+        
+        # Load with relationships to avoid async context issues
+        result = await db.execute(
+            select(EmployeeDetails)
+            .options(
+                selectinload(EmployeeDetails.user),
+                selectinload(EmployeeDetails.manager)
+            )
+            .where(EmployeeDetails.user_id == employee_data.user_id)
+        )
+        employee_details = result.scalar_one_or_none()
+        
+        log_info(f"Employee details created for user {user.email} by admin {current_user.email}")
+        return employee_details
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Admin create employee details error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create employee details"
+        )
+
+@router.put("/employees/{user_id}/details", response_model=EmployeeDetailsResponse)
+async def admin_update_employee_details(
+    user_id: int,
+    employee_data: EmployeeDetailsUpdate,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Update employee details for a user (admin only)."""
+    try:
+        # Security: Validate user_id is positive integer
+        if user_id <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid user ID"
+            )
+        
+        # Get employee details with user information
+        result = await db.execute(
+            select(EmployeeDetails)
+            .options(selectinload(EmployeeDetails.user))
+            .where(EmployeeDetails.user_id == user_id)
+        )
+        employee_details = result.scalar_one_or_none()
+        
+        if not employee_details:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Employee details not found"
+            )
+        
+        # Security: Prevent admin from updating details for other admins/super_admins
+        if employee_details.user.role in ['admin', 'super_admin'] and current_user.role != 'super_admin':
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot update employee details for admin users"
+            )
+        
+        # Validate manager_id if provided
+        if employee_data.manager_id:
+            manager_result = await db.execute(
+                select(User).where(and_(User.id == employee_data.manager_id, User.is_active == True))
+            )
+            manager = manager_result.scalar_one_or_none()
+            if not manager:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid manager ID"
+                )
+            # Prevent circular manager relationships
+            if employee_data.manager_id == user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="User cannot be their own manager"
+                )
+        
+        # Update fields with validation
+        update_data = employee_data.dict(exclude_unset=True)
+        for field, value in update_data.items():
+            if hasattr(employee_details, field) and value is not None:
+                setattr(employee_details, field, value)
+        
+        await db.commit()
+        
+        # Load with relationships to avoid async context issues
+        result = await db.execute(
+            select(EmployeeDetails)
+            .options(
+                selectinload(EmployeeDetails.user),
+                selectinload(EmployeeDetails.manager)
+            )
+            .where(EmployeeDetails.user_id == user_id)
+        )
+        employee_details = result.scalar_one_or_none()
+        
+        log_info(f"Employee details updated for user {user_id} by admin {current_user.email}")
+        return employee_details
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Admin update employee details error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update employee details"
+        )
+
+@router.post("/employees/{user_id}/history", response_model=EmploymentHistoryResponse)
+async def admin_create_employment_history(
+    user_id: int,
+    history_data: EmploymentHistoryCreate,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Create employment history for a user (admin only)."""
+    try:
+        # Security: Validate user_id is positive integer
+        if user_id <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid user ID"
+            )
+        
+        # Check if user exists and is active
+        user_result = await db.execute(
+            select(User).where(and_(User.id == user_id, User.is_active == True))
+        )
+        user = user_result.scalar_one_or_none()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Active user not found"
+            )
+        
+        # Security: Prevent admin from creating history for other admins/super_admins
+        if user.role in ['admin', 'super_admin'] and current_user.role != 'super_admin':
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot create employment history for admin users"
+            )
+        
+        # Validate manager_id if provided
+        if history_data.manager_id:
+            manager_result = await db.execute(
+                select(User).where(and_(User.id == history_data.manager_id, User.is_active == True))
+            )
+            manager = manager_result.scalar_one_or_none()
+            if not manager:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid manager ID"
+                )
+            # Prevent circular manager relationships
+            if history_data.manager_id == user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="User cannot be their own manager"
+                )
+        
+        # Validate date logic
+        if history_data.end_date and history_data.end_date < history_data.start_date:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="End date cannot be before start date"
+            )
+        
+        # If this is marked as current position, unmark all other current positions
+        is_current = history_data.end_date is None
+        if is_current:
+            await db.execute(
+                update(EmploymentHistory)
+                .where(EmploymentHistory.user_id == user_id)
+                .values(is_current=False)
+            )
+        
+        # Create employment history with validated data
+        history_dict = history_data.dict()
+        history_dict['is_current'] = is_current
+        employment_history = EmploymentHistory(user_id=user_id, **history_dict)
+        db.add(employment_history)
+        await db.commit()
+        
+        # Load with relationships to avoid async context issues
+        result = await db.execute(
+            select(EmploymentHistory)
+            .options(
+                selectinload(EmploymentHistory.user),
+                selectinload(EmploymentHistory.manager)
+            )
+            .where(EmploymentHistory.id == employment_history.id)
+        )
+        employment_history = result.scalar_one_or_none()
+        
+        log_info(f"Employment history created for user {user.email} by admin {current_user.email}")
+        return employment_history
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Admin create employment history error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create employment history"
+        )
+
+@router.get("/employees", response_model=List[EmployeeSummary])
+async def admin_get_all_employees(
+    offset: int = 0,
+    limit: int = 10,
+    department: str = None,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get all employees with comprehensive details (admin only)."""
+    try:
+        # Get all users first
+        result = await db.execute(
+            select(User)
+            .offset(offset)
+            .limit(limit)
+            .order_by(User.name)
+        )
+        users = result.scalars().all()
+        
+        employee_summaries = []
+        for user in users:
+            # Get employee details for this user safely
+            employee_details = await safe_get_employee_details(db, user.id)
+            
+            # Skip users without employee details if filtering by department
+            if department and (not employee_details or employee_details.department != department):
+                continue
+            # Get current position
+            current_position_result = await db.execute(
+                select(EmploymentHistory)
+                .where(
+                    and_(
+                        EmploymentHistory.user_id == user.id,
+                        EmploymentHistory.is_current == True
+                    )
+                )
+            )
+            current_position = current_position_result.scalar_one_or_none()
+            
+            # Tracking disabled
+            recent_tracking = []
+            total_work_days = 0
+            total_hours = 0
+            average_hours_per_day = 0
+            
+            employee_summaries.append(EmployeeSummary(
+                user=user,
+                employee_details=employee_details,
+                current_position=current_position,
+                recent_tracking=recent_tracking,
+                total_work_days=total_work_days,
+                average_hours_per_day=average_hours_per_day
+            ))
+        
+        return employee_summaries
+        
+    except Exception as e:
+        log_error(f"Admin get all employees error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch employees"
+        )
+
+@router.get("/employees/{user_id}/summary", response_model=EmployeeSummary)
+async def admin_get_employee_summary(
+    user_id: int,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get comprehensive employee summary (admin only)."""
+    try:
+        # Get user
+        user_result = await db.execute(select(User).where(User.id == user_id))
+        user = user_result.scalar_one_or_none()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Get employee details
+        details_result = await db.execute(
+            select(EmployeeDetails)
+            .options(
+                selectinload(EmployeeDetails.user),
+                selectinload(EmployeeDetails.manager)
+            )
+            .where(EmployeeDetails.user_id == user_id)
+        )
+        employee_details = details_result.scalar_one_or_none()
+        
+        # Get current position
+        current_position_result = await db.execute(
+            select(EmploymentHistory)
+            .options(
+                selectinload(EmploymentHistory.user),
+                selectinload(EmploymentHistory.manager)
+            )
+            .where(
+                and_(
+                    EmploymentHistory.user_id == user_id,
+                    EmploymentHistory.is_current == True
+                )
+            )
+        )
+        current_position = current_position_result.scalar_one_or_none()
+        
+        # Tracking disabled
+        recent_tracking = []
+        total_work_days = 0
+        total_hours = 0
+        average_hours_per_day = 0
+        
+        return EmployeeSummary(
+            user=user,
+            employee_details=employee_details,
+            current_position=current_position,
+            recent_tracking=recent_tracking,
+            total_work_days=total_work_days,
+            average_hours_per_day=average_hours_per_day
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Admin get employee summary error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch employee summary"
+        )
+
+@router.get("/employees/departments")
+async def admin_get_departments(
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get all departments with employee counts (admin only)."""
+    try:
+        result = await db.execute(
+            select(EmployeeDetails.department, func.count(EmployeeDetails.id))
+            .where(EmployeeDetails.department.isnot(None))
+            .group_by(EmployeeDetails.department)
+            .order_by(EmployeeDetails.department)
+        )
+        departments = result.fetchall()
+        
+        return {
+            "departments": [
+                {"name": dept[0], "employee_count": dept[1]} 
+                for dept in departments
+            ]
+        }
+        
+    except Exception as e:
+        log_error(f"Admin get departments error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch departments"
+        )
+
+
+@router.get("/dashboard/enhanced")
+async def get_enhanced_dashboard_stats(
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get enhanced dashboard statistics with employee data (admin only)."""
+    try:
+        today = datetime.now().date()
+        
+        # Basic stats
+        total_users = await db.execute(select(func.count(User.id)))
+        total_users = total_users.scalar() or 0
+        
+        # Tracking disabled
+        active_users_today = 0
+        
+        pending_leaves = await db.execute(
+            select(func.count(Leave.id)).where(Leave.status == LeaveStatus.PENDING)
+        )
+        pending_leaves = pending_leaves.scalar() or 0
+        
+        # Employee-specific stats
+        total_employees_with_details = await db.execute(
+            select(func.count(EmployeeDetails.id))
+        )
+        total_employees_with_details = total_employees_with_details.scalar() or 0
+        
+        # Department stats
+        department_stats = await db.execute(
+            select(EmployeeDetails.department, func.count(EmployeeDetails.id))
+            .where(EmployeeDetails.department.isnot(None))
+            .group_by(EmployeeDetails.department)
+        )
+        departments = department_stats.fetchall()
+        
+        # Recent activity (tracking disabled)
+        recent_activity = []
+        
+        return {
+            "basic_stats": {
+                "total_users": total_users,
+                "active_users_today": active_users_today,
+                "pending_leaves": pending_leaves,
+                "employees_with_details": total_employees_with_details
+            },
+            "departments": [
+                {"name": dept[0], "count": dept[1]} 
+                for dept in departments
+            ],
+            "recent_activity": recent_activity
+        }
+        
+    except Exception as e:
+        log_error(f"Enhanced dashboard stats error: {str(e)}")
+        return {
+            "basic_stats": {
+                "total_users": 0,
+                "active_users_today": 0,
+                "pending_leaves": 0,
+                "employees_with_details": 0
+            },
+            "departments": [],
+            "recent_activity": []
+        }

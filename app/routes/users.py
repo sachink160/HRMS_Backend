@@ -1,9 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select, update, and_, func
+from sqlalchemy.orm import selectinload
+from datetime import datetime, timedelta
+from typing import List, Optional
 from app.database import get_db
-from app.models import User, DocumentStatus
-from app.schema import UserUpdate, UserResponse, FileUploadResponse
+from app.models import User, DocumentStatus, EmployeeDetails, EmploymentHistory
+from app.schema import (
+    UserUpdate, UserResponse, FileUploadResponse,
+    EmployeeDetailsResponse, EmploymentHistoryResponse, EmployeeSummary
+)
 from app.auth import get_current_user, get_current_admin_user
 from app.logger import log_info, log_error
 import os
@@ -271,4 +277,266 @@ async def upload_pan(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to upload PAN"
+        )
+
+# Employee Management Endpoints for Users
+@router.get("/my-employee-details", response_model=Optional[EmployeeDetailsResponse])
+async def get_my_employee_details(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get current user's employee details (read-only access)."""
+    try:
+        # Security: Ensure user is active
+        if not current_user.is_active:
+            log_error(f"Inactive user {current_user.email} attempted to access employee details")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account is deactivated"
+            )
+        
+        log_info(f"User {current_user.email} (ID: {current_user.id}) accessing employee details")
+        
+        result = await db.execute(
+            select(EmployeeDetails)
+            .options(
+                selectinload(EmployeeDetails.user),
+                selectinload(EmployeeDetails.manager)
+            )
+            .where(EmployeeDetails.user_id == current_user.id)
+        )
+        employee_details = result.scalar_one_or_none()
+        
+        # Only return employee details if they exist and are active
+        if employee_details and not employee_details.is_active:
+            employee_details = None
+        
+        # Log access for audit
+        log_info(f"User {current_user.email} accessed their employee details")
+        return employee_details
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Get my employee details error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch employee details"
+        )
+
+@router.get("/my-employment-history", response_model=List[EmploymentHistoryResponse])
+async def get_my_employment_history(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get current user's employment history (read-only access)."""
+    try:
+        # Security: Ensure user is active
+        if not current_user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account is deactivated"
+            )
+        
+        result = await db.execute(
+            select(EmploymentHistory)
+            .options(
+                selectinload(EmploymentHistory.user),
+                selectinload(EmploymentHistory.manager)
+            )
+            .where(EmploymentHistory.user_id == current_user.id)
+            .order_by(EmploymentHistory.start_date.desc())
+        )
+        history = result.scalars().all()
+        
+        # Log access for audit
+        log_info(f"User {current_user.email} accessed their employment history")
+        return history
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Get my employment history error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch employment history"
+        )
+
+@router.get("/my-employee-summary", response_model=EmployeeSummary)
+async def get_my_employee_summary(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get current user's comprehensive employee summary (read-only access)."""
+    try:
+        # Security: Ensure user is active
+        if not current_user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account is deactivated"
+            )
+        
+        # Get employee details with security check
+        details_result = await db.execute(
+            select(EmployeeDetails)
+            .options(
+                selectinload(EmployeeDetails.user),
+                selectinload(EmployeeDetails.manager)
+            )
+            .where(and_(
+                EmployeeDetails.user_id == current_user.id,
+                EmployeeDetails.is_active == True
+            ))
+        )
+        employee_details = details_result.scalar_one_or_none()
+        
+        # Get current position
+        current_position_result = await db.execute(
+            select(EmploymentHistory)
+            .options(
+                selectinload(EmploymentHistory.user),
+                selectinload(EmploymentHistory.manager)
+            )
+            .where(
+                and_(
+                    EmploymentHistory.user_id == current_user.id,
+                    EmploymentHistory.is_current == True
+                )
+            )
+        )
+        current_position = current_position_result.scalar_one_or_none()
+        
+        # Calculate work statistics (no tracking data available)
+        total_work_days = 0
+        total_hours = 0
+        average_hours_per_day = 0
+        
+        # Log access for audit
+        log_info(f"User {current_user.email} accessed their employee summary")
+        
+        return EmployeeSummary(
+            user=current_user,
+            employee_details=employee_details,
+            current_position=current_position,
+            recent_tracking=[],
+            total_work_days=total_work_days,
+            average_hours_per_day=average_hours_per_day
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Get my employee summary error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch employee summary"
+        )
+
+
+@router.get("/my-department-colleagues")
+async def get_my_department_colleagues(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get colleagues from the same department."""
+    try:
+        # Security: Ensure user is active
+        if not current_user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account is deactivated"
+            )
+        # Get current user's department
+        user_details_result = await db.execute(
+            select(EmployeeDetails).where(EmployeeDetails.user_id == current_user.id)
+        )
+        user_details = user_details_result.scalar_one_or_none()
+        
+        if not user_details or not user_details.department:
+            return {"colleagues": [], "department": None}
+        
+        # Get colleagues from same department
+        colleagues_result = await db.execute(
+            select(User)
+            .join(EmployeeDetails)
+            .where(
+                and_(
+                    EmployeeDetails.department == user_details.department,
+                    User.id != current_user.id,
+                    User.is_active == True
+                )
+            )
+            .options(selectinload(User.employee_details))
+        )
+        colleagues = colleagues_result.scalars().all()
+        
+        return {
+            "department": user_details.department,
+            "colleagues": [
+                {
+                    "id": colleague.id,
+                    "name": colleague.name,
+                    "email": colleague.email,
+                    "designation": colleague.designation,
+                    "employee_details": getattr(colleague, 'employee_details', None)
+                }
+                for colleague in colleagues
+            ]
+        }
+        
+    except Exception as e:
+        log_error(f"Get department colleagues error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch department colleagues"
+        )
+
+@router.get("/my-manager")
+async def get_my_manager(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get current user's manager information."""
+    try:
+        # Security: Ensure user is active
+        if not current_user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account is deactivated"
+            )
+        # Get current user's manager from employee details
+        user_details_result = await db.execute(
+            select(EmployeeDetails)
+            .options(selectinload(EmployeeDetails.manager))
+            .where(EmployeeDetails.user_id == current_user.id)
+        )
+        user_details = user_details_result.scalar_one_or_none()
+        
+        if not user_details or not user_details.manager_id:
+            return {"manager": None}
+        
+        # Get manager details
+        manager_result = await db.execute(
+            select(User).where(User.id == user_details.manager_id)
+        )
+        manager = manager_result.scalar_one_or_none()
+        
+        if not manager:
+            return {"manager": None}
+        
+        return {
+            "manager": {
+                "id": manager.id,
+                "name": manager.name,
+                "email": manager.email,
+                "designation": manager.designation,
+                "phone": manager.phone
+            }
+        }
+        
+    except Exception as e:
+        log_error(f"Get my manager error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch manager information"
         )

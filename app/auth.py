@@ -79,6 +79,7 @@ async def get_current_user(
     user = await get_user_by_email(db, email=token_data.email)
     if user is None:
         raise credentials_exception
+    
     return user
 
 async def get_current_active_user(current_user: User = Depends(get_current_user)) -> User:
