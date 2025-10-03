@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_, text
+from sqlalchemy import select, func, and_, text, update
 from fastapi import UploadFile, File
 from pathlib import Path
 import uuid
@@ -23,13 +23,11 @@ async def safe_get_employee_details(db: AsyncSession, user_id: int):
     """Safely get employee details, handling missing columns gracefully."""
     try:
         # Try to get employee details using ORM
-        from app.models import EmployeeDetails
         result = await db.execute(
             select(EmployeeDetails).where(EmployeeDetails.user_id == user_id)
         )
         return result.scalar_one_or_none()
     except Exception as e:
-        from app.logger import log_error
         log_error(f"Error fetching employee details for user {user_id}: {str(e)}")
         # If there's a schema mismatch, try to get basic info using raw SQL
         try:
@@ -43,7 +41,6 @@ async def safe_get_employee_details(db: AsyncSession, user_id: int):
             row = result.fetchone()
             if row:
                 # Create a minimal EmployeeDetails object with available fields
-                from app.models import EmployeeDetails
                 details = EmployeeDetails()
                 details.id = row[0]
                 details.user_id = row[1]
@@ -964,8 +961,32 @@ async def toggle_user_status(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Cannot change your own status"
             )
+
+        # Prevent deactivating super admin unless the actor is a super admin
+        try:
+            from app.models import UserRole
+            if user.role == UserRole.SUPER_ADMIN and current_user.role != UserRole.SUPER_ADMIN:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Only super admins can change super admin status"
+                )
+        except Exception:
+            # If enum import/compare fails for any reason, skip this guard rather than crash
+            pass
         
+        # Toggle user status
         user.is_active = not user.is_active
+
+        # Sync employee_details.is_active if exists
+        try:
+            ed_result = await db.execute(select(EmployeeDetails).where(EmployeeDetails.user_id == user_id))
+            employee_details = ed_result.scalar_one_or_none()
+            if employee_details is not None:
+                employee_details.is_active = user.is_active
+        except Exception as sync_err:
+            # Log but don't fail the whole request for sync issues
+            log_error(f"EmployeeDetails sync error while toggling user {user_id}: {str(sync_err)}")
+
         await db.commit()
         await db.refresh(user)
         
@@ -974,11 +995,24 @@ async def toggle_user_status(
         return {"message": f"User {status_text} successfully", "user": user}
         
     except Exception as e:
+        await db.rollback()
         log_error(f"Toggle user status error: {str(e)}")
+        if isinstance(e, HTTPException):
+            raise e
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to toggle user status"
+            detail=f"Failed to toggle user status: {str(e) or 'internal error'}"
         )
+
+@router.patch("/users/{user_id}/toggle-status")
+async def toggle_user_status_patch(
+    user_id: int,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """PATCH alias for toggling user active status (admin only)."""
+    # Delegate to the PUT handler to keep logic in one place
+    return await toggle_user_status(user_id, current_user, db)
 
 @router.put("/users/{user_id}/promote")
 async def promote_user(
@@ -1049,7 +1083,22 @@ async def delete_user(
             )
         
         # Delete related records first
-        # Tracking disabled - no trackers to delete
+        # Delete employee details
+        from app.models import EmployeeDetails, EmploymentHistory
+        employee_details_result = await db.execute(
+            select(EmployeeDetails).where(EmployeeDetails.user_id == user_id)
+        )
+        employee_details = employee_details_result.scalar_one_or_none()
+        if employee_details:
+            await db.delete(employee_details)
+        
+        # Delete employment history
+        employment_history_result = await db.execute(
+            select(EmploymentHistory).where(EmploymentHistory.user_id == user_id)
+        )
+        employment_history_records = employment_history_result.scalars().all()
+        for history in employment_history_records:
+            await db.delete(history)
         
         # Delete user leaves
         from app.models import Leave
@@ -1059,6 +1108,35 @@ async def delete_user(
         leaves = leaves_result.scalars().all()
         for leave in leaves:
             await db.delete(leave)
+        
+        # Update any records that reference this user as manager/reviewer/initiator
+        # Set manager_id to NULL for employee details where this user is the manager
+        await db.execute(
+            update(EmployeeDetails)
+            .where(EmployeeDetails.manager_id == user_id)
+            .values(manager_id=None)
+        )
+        
+        # Set probation_reviewer_id to NULL for employee details where this user is the reviewer
+        await db.execute(
+            update(EmployeeDetails)
+            .where(EmployeeDetails.probation_reviewer_id == user_id)
+            .values(probation_reviewer_id=None)
+        )
+        
+        # Set termination_initiated_by to NULL for employee details where this user initiated termination
+        await db.execute(
+            update(EmployeeDetails)
+            .where(EmployeeDetails.termination_initiated_by == user_id)
+            .values(termination_initiated_by=None)
+        )
+        
+        # Set manager_id to NULL for employment history where this user is the manager
+        await db.execute(
+            update(EmploymentHistory)
+            .where(EmploymentHistory.manager_id == user_id)
+            .values(manager_id=None)
+        )
         
         # Delete user
         await db.delete(user)
@@ -1305,6 +1383,92 @@ async def admin_update_employee_details(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update employee details"
+        )
+
+@router.patch("/employees/{user_id}/details", response_model=EmployeeDetailsResponse)
+async def admin_patch_employee_details(
+    user_id: int,
+    employee_data: EmployeeDetailsUpdate,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Partially update employee details for a user (admin only)."""
+    try:
+        # Security: Validate user_id is positive integer
+        if user_id <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid user ID"
+            )
+        
+        # Get employee details with user information
+        result = await db.execute(
+            select(EmployeeDetails)
+            .options(selectinload(EmployeeDetails.user))
+            .where(EmployeeDetails.user_id == user_id)
+        )
+        employee_details = result.scalar_one_or_none()
+        
+        if not employee_details:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Employee details not found"
+            )
+        
+        # Security: Prevent admin from updating details for other admins/super_admins
+        if employee_details.user.role in ['admin', 'super_admin'] and current_user.role != 'super_admin':
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot update employee details for admin users"
+            )
+        
+        # Validate manager_id if provided
+        if employee_data.manager_id:
+            manager_result = await db.execute(
+                select(User).where(and_(User.id == employee_data.manager_id, User.is_active == True))
+            )
+            manager = manager_result.scalar_one_or_none()
+            if not manager:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid manager ID"
+                )
+            # Prevent circular manager relationships
+            if employee_data.manager_id == user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="User cannot be their own manager"
+                )
+        
+        # Update only provided fields (PATCH behavior)
+        update_data = employee_data.dict(exclude_unset=True)
+        for field, value in update_data.items():
+            if hasattr(employee_details, field) and value is not None:
+                setattr(employee_details, field, value)
+        
+        await db.commit()
+        
+        # Load with relationships to avoid async context issues
+        result = await db.execute(
+            select(EmployeeDetails)
+            .options(
+                selectinload(EmployeeDetails.user),
+                selectinload(EmployeeDetails.manager)
+            )
+            .where(EmployeeDetails.user_id == user_id)
+        )
+        employee_details = result.scalar_one_or_none()
+        
+        log_info(f"Employee details patched for user {user_id} by admin {current_user.email}")
+        return employee_details
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Admin patch employee details error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to patch employee details"
         )
 
 @router.post("/employees/{user_id}/history", response_model=EmploymentHistoryResponse)

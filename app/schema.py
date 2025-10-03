@@ -614,6 +614,29 @@ class EmployeeDetailsBase(BaseModel):
     certifications: Optional[str] = None  # JSON string
     education_qualification: Optional[str] = None
     previous_experience_years: Optional[int] = None
+    
+    # Probation Management (exposed in responses)
+    probation_period_months: Optional[int] = None
+    probation_start_date: Optional[date] = None
+    probation_end_date: Optional[date] = None
+    probation_status: Optional[str] = None
+    probation_review_date: Optional[date] = None
+    probation_review_notes: Optional[str] = None
+    probation_reviewer_id: Optional[int] = None
+    
+    # Termination Management (exposed in responses)
+    termination_date: Optional[date] = None
+    termination_reason: Optional[str] = None
+    termination_type: Optional[str] = None
+    termination_notice_period_days: Optional[int] = None
+    last_working_date: Optional[date] = None
+    termination_notes: Optional[str] = None
+    termination_initiated_by: Optional[int] = None
+    exit_interview_date: Optional[date] = None
+    exit_interview_notes: Optional[str] = None
+    clearance_status: Optional[str] = None
+    final_settlement_amount: Optional[str] = None
+    final_settlement_date: Optional[date] = None
 
 class EmployeeDetailsCreate(EmployeeDetailsBase):
     user_id: int
