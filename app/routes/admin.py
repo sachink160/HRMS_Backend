@@ -12,7 +12,7 @@ from app.models import User, Leave, Holiday, LeaveStatus, UserRole, DocumentStat
 from app.schema import (
     UserResponse, LeaveResponse, HolidayResponse, TrackerResponse, UserCreate,
     EmployeeDetailsResponse, EmploymentHistoryResponse, EmployeeSummary, EnhancedTrackerResponse,
-    EmployeeDetailsCreate, EmployeeDetailsUpdate, EmploymentHistoryCreate
+    EmployeeDetailsCreate, EmployeeDetailsUpdate, EmploymentHistoryCreate, AdminUserUpdate
 )
 from app.auth import get_current_admin_user, get_password_hash, get_current_super_admin_user
 from app.logger import log_info, log_error
@@ -366,11 +366,12 @@ async def create_user(
 @router.put("/users/{user_id}", response_model=UserResponse)
 async def update_user(
     user_id: int,
-    user_data: dict,
+    user_data: AdminUserUpdate,
     current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Update user information (admin only)."""
+    log_info(f"PUT /admin/users/{user_id} called by {current_user.email}")
     try:
         # Get user
         result = await db.execute(select(User).where(User.id == user_id))
@@ -382,94 +383,248 @@ async def update_user(
                 detail="User not found"
             )
         
-        # Check if trying to update super admin
-        if user.role == UserRole.SUPER_ADMIN:
+        # Check if trying to update super admin (allow if editing own profile)
+        if user.role == UserRole.SUPER_ADMIN and user.id != current_user.id:
+            log_error(f"Attempted to update super admin user {user_id} by {current_user.email}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Cannot update super admin user"
             )
         
         # Validate role if provided
-        if 'role' in user_data:
-            if user_data['role'] not in [UserRole.USER, UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+        if user_data.role is not None:
+            log_info(f"Role validation - received role: {user_data.role} (type: {type(user_data.role)})")
+            # Convert string role to UserRole enum if needed
+            if isinstance(user_data.role, str):
+                try:
+                    user_data.role = UserRole(user_data.role)
+                    log_info(f"Converted string role to enum: {user_data.role}")
+                except ValueError:
+                    log_error(f"Invalid role string: {user_data.role}")
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Invalid role value: {user_data.role}. Must be 'user', 'admin', or 'super_admin'"
+                    )
+            
+            if user_data.role not in [UserRole.USER, UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+                log_error(f"Role not in allowed values: {user_data.role}")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Invalid role. Must be 'user', 'admin', or 'super_admin'"
                 )
+            
+            # Prevent super admin from changing their own role
+            if user.role == UserRole.SUPER_ADMIN and user.id == current_user.id:
+                log_error(f"Super admin {current_user.email} attempted to change their own role from {user.role} to {user_data.role}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Super admin cannot change their own role. Please update other fields without changing the role."
+                )
+            
+            log_info(f"Role validation passed: {user_data.role}")
         
         # Check email uniqueness if email is being updated
-        if 'email' in user_data and user_data['email'] != user.email:
-            existing_user = await db.execute(select(User).where(User.email == user_data['email']))
+        if user_data.email is not None and user_data.email != user.email:
+            existing_user = await db.execute(select(User).where(User.email == user_data.email))
             if existing_user.scalar_one_or_none():
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Email already registered"
                 )
         
-        # Update user fields
-        if 'name' in user_data:
-            user.name = user_data['name']
-        if 'email' in user_data:
-            user.email = user_data['email']
-        if 'phone' in user_data:
-            user.phone = user_data['phone']
-        if 'designation' in user_data:
-            user.designation = user_data['designation']
-        if 'joining_date' in user_data:
-            jd = user_data['joining_date']
-            try:
-                if isinstance(jd, str) and jd:
-                    # Accept formats like 'YYYY-MM-DD' or ISO datetime
-                    try:
-                        parsed = datetime.strptime(jd, "%Y-%m-%d").date()
-                    except ValueError:
-                        parsed = datetime.fromisoformat(jd).date()
-                    user.joining_date = parsed
-                elif isinstance(jd, date):
-                    user.joining_date = jd
-                elif jd in (None, ""):
-                    user.joining_date = None
-            except Exception as e:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid joining_date format. Expected YYYY-MM-DD"
-                )
-        if 'wifi_user_id' in user_data:
-            user.wifi_user_id = user_data['wifi_user_id'] or None
-        if 'role' in user_data:
-            # Convert string role to enum if needed
-            if isinstance(user_data['role'], str):
-                try:
-                    user.role = UserRole(user_data['role'])
-                except ValueError:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Invalid role value: {user_data['role']}"
-                    )
-            else:
-                user.role = user_data['role']
+        # Update user fields using Pydantic model
+        update_data = user_data.model_dump(exclude_unset=True)
+        log_info(f"Update data for user {user_id}: {update_data}")
+        
+        # Update basic fields
+        if 'name' in update_data:
+            user.name = update_data['name']
+            log_info(f"Updated name to: {update_data['name']}")
+        if 'email' in update_data:
+            user.email = update_data['email']
+            log_info(f"Updated email to: {update_data['email']}")
+        if 'phone' in update_data:
+            user.phone = update_data['phone']
+            log_info(f"Updated phone to: {update_data['phone']}")
+        if 'designation' in update_data:
+            user.designation = update_data['designation']
+            log_info(f"Updated designation to: {update_data['designation']}")
+        if 'joining_date' in update_data:
+            user.joining_date = update_data['joining_date']
+            log_info(f"Updated joining_date to: {update_data['joining_date']}")
+        if 'wifi_user_id' in update_data:
+            user.wifi_user_id = update_data['wifi_user_id']
+            log_info(f"Updated wifi_user_id to: {update_data['wifi_user_id']}")
+        if 'role' in update_data:
+            user.role = update_data['role']
+            log_info(f"Updated role to: {update_data['role']}")
+        
+        # Update document fields and set status to pending when updated
+        if 'profile_image' in update_data:
+            user.profile_image = update_data['profile_image']
+            user.profile_image_status = DocumentStatus.PENDING
+            log_info(f"Updated profile_image to: {update_data['profile_image']}")
+        if 'aadhaar_front' in update_data:
+            user.aadhaar_front = update_data['aadhaar_front']
+            user.aadhaar_front_status = DocumentStatus.PENDING
+            log_info(f"Updated aadhaar_front to: {update_data['aadhaar_front']}")
+        if 'aadhaar_back' in update_data:
+            user.aadhaar_back = update_data['aadhaar_back']
+            user.aadhaar_back_status = DocumentStatus.PENDING
+            log_info(f"Updated aadhaar_back to: {update_data['aadhaar_back']}")
+        if 'pan_image' in update_data:
+            user.pan_image = update_data['pan_image']
+            user.pan_image_status = DocumentStatus.PENDING
+            log_info(f"Updated pan_image to: {update_data['pan_image']}")
 
-        # Final safeguard: ensure joining_date is a date object before committing
-        try:
-            if isinstance(user.joining_date, str):
-                try:
-                    user.joining_date = datetime.strptime(user.joining_date, "%Y-%m-%d").date()
-                except ValueError:
-                    user.joining_date = datetime.fromisoformat(user.joining_date).date()
-        except Exception:
-            pass
-
+        log_info(f"About to commit changes for user {user_id}")
         await db.commit()
+        log_info(f"Changes committed for user {user_id}")
         await db.refresh(user)
+        log_info(f"User {user_id} refreshed from database")
         
         log_info(f"User {user_id} updated by admin {current_user.email}")
         return user
         
     except Exception as e:
         log_error(f"Update user error: {str(e)}")
+        import traceback
+        log_error(f"Update user traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update user"
+            detail=f"Failed to update user: {str(e)}"
+        )
+
+@router.patch("/users/{user_id}", response_model=UserResponse)
+async def patch_user(
+    user_id: int,
+    user_data: AdminUserUpdate,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Partially update user information (admin only)."""
+    log_info(f"PATCH /admin/users/{user_id} called by {current_user.email}")
+    try:
+        # Get user
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Check if trying to update super admin (allow if editing own profile)
+        if user.role == UserRole.SUPER_ADMIN and user.id != current_user.id:
+            log_error(f"Attempted to update super admin user {user_id} by {current_user.email}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot update super admin user"
+            )
+        
+        # Validate role if provided
+        if user_data.role is not None:
+            log_info(f"Role validation - received role: {user_data.role} (type: {type(user_data.role)})")
+            # Convert string role to UserRole enum if needed
+            if isinstance(user_data.role, str):
+                try:
+                    user_data.role = UserRole(user_data.role)
+                    log_info(f"Converted string role to enum: {user_data.role}")
+                except ValueError:
+                    log_error(f"Invalid role string: {user_data.role}")
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Invalid role value: {user_data.role}. Must be 'user', 'admin', or 'super_admin'"
+                    )
+            
+            if user_data.role not in [UserRole.USER, UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+                log_error(f"Role not in allowed values: {user_data.role}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid role. Must be 'user', 'admin', or 'super_admin'"
+                )
+            
+            # Prevent super admin from changing their own role
+            if user.role == UserRole.SUPER_ADMIN and user.id == current_user.id:
+                log_error(f"Super admin {current_user.email} attempted to change their own role from {user.role} to {user_data.role}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Super admin cannot change their own role. Please update other fields without changing the role."
+                )
+            
+            log_info(f"Role validation passed: {user_data.role}")
+        
+        # Check email uniqueness if email is being updated
+        if user_data.email is not None and user_data.email != user.email:
+            existing_user = await db.execute(select(User).where(User.email == user_data.email))
+            if existing_user.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email already registered"
+                )
+        
+        # Update user fields using Pydantic model (PATCH behavior - only update provided fields)
+        update_data = user_data.model_dump(exclude_unset=True)
+        log_info(f"PATCH update data for user {user_id}: {update_data}")
+        
+        # Update basic fields
+        if 'name' in update_data:
+            user.name = update_data['name']
+            log_info(f"Updated name to: {update_data['name']}")
+        if 'email' in update_data:
+            user.email = update_data['email']
+            log_info(f"Updated email to: {update_data['email']}")
+        if 'phone' in update_data:
+            user.phone = update_data['phone']
+            log_info(f"Updated phone to: {update_data['phone']}")
+        if 'designation' in update_data:
+            user.designation = update_data['designation']
+            log_info(f"Updated designation to: {update_data['designation']}")
+        if 'joining_date' in update_data:
+            user.joining_date = update_data['joining_date']
+            log_info(f"Updated joining_date to: {update_data['joining_date']}")
+        if 'wifi_user_id' in update_data:
+            user.wifi_user_id = update_data['wifi_user_id']
+            log_info(f"Updated wifi_user_id to: {update_data['wifi_user_id']}")
+        if 'role' in update_data:
+            user.role = update_data['role']
+            log_info(f"Updated role to: {update_data['role']}")
+        
+        # Update document fields and set status to pending when updated
+        if 'profile_image' in update_data:
+            user.profile_image = update_data['profile_image']
+            user.profile_image_status = DocumentStatus.PENDING
+            log_info(f"Updated profile_image to: {update_data['profile_image']}")
+        if 'aadhaar_front' in update_data:
+            user.aadhaar_front = update_data['aadhaar_front']
+            user.aadhaar_front_status = DocumentStatus.PENDING
+            log_info(f"Updated aadhaar_front to: {update_data['aadhaar_front']}")
+        if 'aadhaar_back' in update_data:
+            user.aadhaar_back = update_data['aadhaar_back']
+            user.aadhaar_back_status = DocumentStatus.PENDING
+            log_info(f"Updated aadhaar_back to: {update_data['aadhaar_back']}")
+        if 'pan_image' in update_data:
+            user.pan_image = update_data['pan_image']
+            user.pan_image_status = DocumentStatus.PENDING
+            log_info(f"Updated pan_image to: {update_data['pan_image']}")
+
+        log_info(f"About to commit PATCH changes for user {user_id}")
+        await db.commit()
+        log_info(f"PATCH changes committed for user {user_id}")
+        await db.refresh(user)
+        log_info(f"User {user_id} refreshed from database")
+        
+        log_info(f"User {user_id} patched by admin {current_user.email}")
+        return user
+        
+    except Exception as e:
+        log_error(f"PATCH user error: {str(e)}")
+        import traceback
+        log_error(f"PATCH user traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to patch user: {str(e)}"
         )
 
 @router.get("/users", response_model=List[UserResponse])

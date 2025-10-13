@@ -80,7 +80,7 @@ async def update_profile(
 ):
     """Update current user's profile."""
     try:
-        update_data = user_update.dict(exclude_unset=True)
+        update_data = user_update.model_dump(exclude_unset=True)
         if not update_data:
             return current_user
         

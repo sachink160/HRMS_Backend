@@ -310,3 +310,49 @@ class EmploymentHistory(Base):
         Index('idx_employment_manager', 'manager_id'),
         Index('idx_employment_created_at', 'created_at'),
     )
+
+class TaskStatus(str, enum.Enum):
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+class Task(Base):
+    __tablename__ = "tasks"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    
+    # Task Information
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    status = Column(Enum(TaskStatus), default=TaskStatus.PENDING, nullable=False)
+    
+    # Task Dates
+    due_date = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    
+    # Priority and Category
+    priority = Column(String, nullable=True, default="medium")  # low, medium, high, urgent
+    category = Column(String, nullable=True)  # work, personal, project, etc.
+    
+    # System Information
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships
+    user = relationship("User", backref="tasks")
+    
+    # Database indexes for performance optimization
+    __table_args__ = (
+        Index('idx_task_user_id', 'user_id'),
+        Index('idx_task_status', 'status'),
+        Index('idx_task_priority', 'priority'),
+        Index('idx_task_category', 'category'),
+        Index('idx_task_due_date', 'due_date'),
+        Index('idx_task_active', 'is_active'),
+        Index('idx_task_created_at', 'created_at'),
+        Index('idx_task_user_status', 'user_id', 'status'),
+        Index('idx_task_user_created', 'user_id', 'created_at'),
+    )

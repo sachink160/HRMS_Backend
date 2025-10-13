@@ -2,7 +2,7 @@ from pydantic import BaseModel, EmailStr, field_validator
 from typing import Optional, List, Union
 from datetime import datetime, date, timezone
 from decimal import Decimal
-from app.models import UserRole, LeaveStatus, DocumentStatus
+from app.models import UserRole, LeaveStatus, DocumentStatus, TaskStatus
 
 # User Schemas
 class UserBase(BaseModel):
@@ -27,6 +27,20 @@ class UserUpdate(BaseModel):
     aadhaar_back: Optional[str] = None
     pan_image: Optional[str] = None
     # When user updates a file, status will be set to pending in backend
+
+class AdminUserUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    designation: Optional[str] = None
+    joining_date: Optional[date] = None
+    wifi_user_id: Optional[str] = None
+    role: Optional[UserRole] = None
+    profile_image: Optional[str] = None
+    aadhaar_front: Optional[str] = None
+    aadhaar_back: Optional[str] = None
+    pan_image: Optional[str] = None
+    # When admin updates a file, status will be set to pending in backend
 
 class UserResponse(UserBase):
     id: int
@@ -822,3 +836,98 @@ class PaginatedResponse(BaseModel):
     total: int
     offset: int
     limit: int
+
+# Task Schemas
+class TaskBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+    due_date: Optional[Union[str, datetime]] = None
+    priority: Optional[str] = "medium"  # low, medium, high, urgent
+    category: Optional[str] = None
+
+class TaskCreate(TaskBase):
+    @field_validator('due_date')
+    @classmethod
+    def validate_due_date(cls, v):
+        if v is not None and isinstance(v, str):
+            try:
+                # Try parsing as date string (YYYY-MM-DD)
+                return datetime.fromisoformat(v)
+            except ValueError:
+                try:
+                    # Try with time component
+                    return datetime.fromisoformat(v + 'T00:00:00')
+                except ValueError:
+                    try:
+                        # Try parsing with different formats
+                        date_str = v.strip()
+                        date_formats = [
+                            '%Y-%m-%d',      # YYYY-MM-DD
+                            '%m/%d/%Y',      # MM/DD/YYYY
+                            '%d/%m/%Y',      # DD/MM/YYYY
+                            '%m-%d-%Y',      # MM-DD-YYYY
+                            '%d-%m-%Y',      # DD-MM-YYYY
+                            '%Y/%m/%d',      # YYYY/MM/DD
+                            '%d.%m.%Y',      # DD.MM.YYYY
+                            '%m.%d.%Y',      # MM.DD.YYYY
+                            '%Y.%m.%d',      # YYYY.MM.DD
+                        ]
+                        
+                        for fmt in date_formats:
+                            try:
+                                parsed_date = datetime.strptime(date_str, fmt)
+                                return parsed_date
+                            except ValueError:
+                                continue
+                        
+                        raise ValueError(f"Invalid due_date format: {v}. Supported formats: YYYY-MM-DD, MM/DD/YYYY, DD/MM/YYYY, etc.")
+                    except Exception:
+                        raise ValueError(f"Invalid due_date format: {v}")
+        
+        # Ensure the datetime is timezone-aware
+        if isinstance(v, datetime) and v.tzinfo is None:
+            v = v.replace(tzinfo=timezone.utc)
+        return v
+
+class TaskUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[TaskStatus] = None
+    due_date: Optional[Union[str, datetime]] = None
+    priority: Optional[str] = None
+    category: Optional[str] = None
+    
+    @field_validator('due_date')
+    @classmethod
+    def validate_due_date(cls, v):
+        if v is not None and isinstance(v, str):
+            try:
+                return datetime.fromisoformat(v)
+            except ValueError:
+                try:
+                    return datetime.fromisoformat(v + 'T00:00:00')
+                except ValueError:
+                    raise ValueError("Invalid due date format")
+        return v
+
+class TaskResponse(TaskBase):
+    id: int
+    user_id: int
+    status: TaskStatus
+    completed_at: Optional[datetime] = None
+    is_active: bool
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    user: Optional[UserResponse] = None
+    
+    class Config:
+        from_attributes = True
+
+# Task Summary Schema
+class TaskSummary(BaseModel):
+    total_tasks: int
+    pending_tasks: int
+    in_progress_tasks: int
+    completed_tasks: int
+    cancelled_tasks: int
+    overdue_tasks: int
