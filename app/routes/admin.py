@@ -1316,13 +1316,20 @@ async def get_leaves_report(
     current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get comprehensive leaves report (admin only)."""
+    """Get comprehensive leaves report grouped by user (admin only)."""
     try:
+        from collections import defaultdict
+        
+        # Get all users
+        users_result = await db.execute(select(User))
+        all_users = users_result.scalars().all()
+        
+        # Build query for leaves
         query = select(Leave).options(selectinload(Leave.user))
         
         if start_date and end_date:
-            start = datetime.strptime(start_date, "%Y-%m-%d").date()
-            end = datetime.strptime(end_date, "%Y-%m-%d").date()
+            start = datetime.strptime(start_date, "%Y-%m-%d")
+            end = datetime.strptime(end_date, "%Y-%m-%d")
             query = query.where(
                 and_(
                     Leave.start_date >= start,
@@ -1333,10 +1340,118 @@ async def get_leaves_report(
         if status_filter:
             query = query.where(Leave.status == status_filter)
         
-        result = await db.execute(query.order_by(Leave.created_at.desc()))
+        result = await db.execute(query)
         leaves = result.scalars().all()
         
-        # Calculate statistics
+        # Calculate leave totals per user (count and total days)
+        user_leave_data = defaultdict(lambda: {
+            "total_leaves": 0,
+            "approved_leaves": 0,
+            "pending_leaves": 0,
+            "rejected_leaves": 0,
+            "total_days_taken": 0.0,
+            "approved_days": 0.0,
+            "pending_days": 0.0,
+            "rejected_days": 0.0
+        })
+        
+        for leave in leaves:
+            user_id = leave.user_id
+            leave_days = float(leave.total_days)
+            
+            user_leave_data[user_id]["total_leaves"] += 1
+            user_leave_data[user_id]["total_days_taken"] += leave_days
+            
+            if leave.status == LeaveStatus.APPROVED:
+                user_leave_data[user_id]["approved_leaves"] += 1
+                user_leave_data[user_id]["approved_days"] += leave_days
+            elif leave.status == LeaveStatus.PENDING:
+                user_leave_data[user_id]["pending_leaves"] += 1
+                user_leave_data[user_id]["pending_days"] += leave_days
+            elif leave.status == LeaveStatus.REJECTED:
+                user_leave_data[user_id]["rejected_leaves"] += 1
+                user_leave_data[user_id]["rejected_days"] += leave_days
+        
+        # Build response with leave summaries
+        report_data = []
+        
+        # Get current date for calculations
+        from datetime import datetime as dt
+        current_date = dt.now().date()
+        
+        for user in all_users:
+            user_data = user_leave_data.get(user.id, {
+                "total_leaves": 0,
+                "approved_leaves": 0,
+                "pending_leaves": 0,
+                "rejected_leaves": 0,
+                "total_days_taken": 0.0,
+                "approved_days": 0.0,
+                "pending_days": 0.0,
+                "rejected_days": 0.0
+            })
+            
+            # Monthly leave policy: Everyone gets 1 leave per month (current month's allocation)
+            # No accumulation - just the current month's leave allocation
+            if user.joining_date:
+                join_date = user.joining_date
+                
+                # Calculate total months from joining date to current date
+                # Calculate years difference
+                years_diff = current_date.year - join_date.year
+                
+                # Calculate months difference
+                months_diff = current_date.month - join_date.month
+                
+                # Total months
+                total_months = years_diff * 12 + months_diff
+                
+                # Add 1 more month if we're past the joining day in the current month
+                if current_date.day >= join_date.day and total_months >= 0:
+                    total_months += 1
+                elif total_months < 0:
+                    # If joining date is in the future, set to 0
+                    total_months = 0
+                
+                # Monthly leave allocation: Everyone gets 1 leave per month
+                # No accumulation - just show current month's allocation
+                allocated_leaves = 1
+                
+                log_info(f"User {user.name} ({user.email}): Joined {join_date}, Current {current_date}, Total Months: {total_months}, Allocated Leaves: {allocated_leaves}")
+            else:
+                # If no joining date, assume 1 leave (current month)
+                allocated_leaves = 1
+                log_info(f"User {user.name} ({user.email}): No joining date set, defaulting to 1 leave")
+            
+            # Calculate remaining leave (Available - Approved)
+            remaining_leaves = allocated_leaves - user_data["approved_leaves"]
+            
+            # Calculate total leaves taken (all statuses)
+            total_leaves_taken = user_data["approved_leaves"] + user_data["pending_leaves"] + user_data["rejected_leaves"]
+            
+            report_data.append({
+                "user": {
+                    "id": user.id,
+                    "name": user.name,
+                    "email": user.email
+                },
+                "total_leaves": total_leaves_taken,
+                "approved_leaves": user_data["approved_leaves"],
+                "pending_leaves": user_data["pending_leaves"],
+                "rejected_leaves": user_data["rejected_leaves"],
+                "total_days_taken": round(user_data["total_days_taken"], 1),
+                "approved_days": round(user_data["approved_days"], 1),
+                "pending_days": round(user_data["pending_days"], 1),
+                "rejected_days": round(user_data["rejected_days"], 1),
+                "remaining_leaves": max(0, remaining_leaves),  # Don't show negative
+                "allocated_leaves": allocated_leaves
+            })
+        
+        # Sort by total leaves (descending)
+        report_data.sort(key=lambda x: x["total_leaves"], reverse=True)
+        
+        # Calculate overall statistics
+        total_users = len(all_users)
         total_leaves = len(leaves)
         approved_leaves = len([l for l in leaves if l.status == LeaveStatus.APPROVED])
         pending_leaves = len([l for l in leaves if l.status == LeaveStatus.PENDING])
@@ -1348,12 +1463,13 @@ async def get_leaves_report(
                 "end_date": end_date
             },
             "statistics": {
+                "total_users": total_users,
                 "total": total_leaves,
                 "approved": approved_leaves,
                 "pending": pending_leaves,
                 "rejected": rejected_leaves
             },
-            "leaves": leaves
+            "leave_reports": report_data
         }
         
     except Exception as e:

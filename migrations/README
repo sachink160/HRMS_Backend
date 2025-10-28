@@ -1,0 +1,10 @@
+Generic single-database configuration with an async SQLAlchemy engine.
+
+Revises the database schema using Alembic migrations.
+
+Key files:
+- env.py: Migration environment configuration with async support
+- versions/: Directory containing migration versions
+- script.py.mako: Template for creating new migrations
+
+

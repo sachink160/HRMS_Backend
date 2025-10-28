@@ -14,14 +14,9 @@ async def lifespan(app: FastAPI):
     """Application lifespan events."""
     # Startup
     log_info("Starting HRMS Backend Application")
-    try:
-        # Create database tables
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        log_info("Database tables created successfully")
-    except Exception as e:
-        log_error(f"Database initialization error: {str(e)}")
-        raise
+    # Note: Database schema is managed through Alembic migrations
+    # Run: python run_alembic_migration.py upgrade head
+    # to ensure database is up to date
     
     yield
     

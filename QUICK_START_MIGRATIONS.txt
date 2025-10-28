@@ -1,0 +1,94 @@
+╔════════════════════════════════════════════════════════════════════╗
+║                  HRMS MIGRATION QUICK START GUIDE                  ║
+╚════════════════════════════════════════════════════════════════════╝
+
+📌 START HERE - Choose Your Scenario:
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ SCENARIO 1: FRESH DATABASE (No tables exist)                      │
+└─────────────────────────────────────────────────────────────────────┘
+
+Step 1: Create initial migration
+    python run_alembic_migration.py revision --autogenerate -m "Initial migration"
+
+Step 2: Apply migration
+    python run_alembic_migration.py upgrade head
+
+Step 3: Create super admin
+    python create_super_admin.py
+
+Step 4: Verify
+    python run_alembic_migration.py current
+
+✅ DONE! Your database is ready.
+
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ SCENARIO 2: EXISTING DATABASE (Tables already exist)               │
+└─────────────────────────────────────────────────────────────────────┘
+
+Step 1: Generate migration from current schema
+    python run_alembic_migration.py revision --autogenerate -m "Initial schema"
+
+Step 2: Mark database as up-to-date (without applying changes)
+    python run_alembic_migration.py stamp head
+
+Step 3: Verify
+    python run_alembic_migration.py current
+
+✅ DONE! Your existing database is now tracked.
+
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ SCENARIO 3: MAKING CHANGES (After editing app/models.py)          │
+└─────────────────────────────────────────────────────────────────────┘
+
+Step 1: Edit your models
+    # Edit app/models.py (add fields, tables, etc.)
+
+Step 2: Create migration with auto-detect
+    python run_alembic_migration.py revision --autogenerate -m "Add new field"
+
+Step 3: Review generated file (IMPORTANT!)
+    # Check migrations/versions/xxxxx_add_new_field.py
+
+Step 4: Apply migration
+    python run_alembic_migration.py upgrade head
+
+✅ DONE! Your database is updated.
+
+
+═══════════════════════════════════════════════════════════════════
+
+📋 USEFUL COMMANDS:
+
+Check current version:
+    python run_alembic_migration.py current
+
+Show migration history:
+    python run_alembic_migration.py history
+
+Rollback one migration:
+    python run_alembic_migration.py downgrade -1
+
+Rollback all migrations:
+    python run_alembic_migration.py downgrade base
+
+Show all migration heads:
+    python run_alembic_migration.py heads
+
+═══════════════════════════════════════════════════════════════════
+
+⚠️  IMPORTANT NOTES:
+
+1. Always review migrations before applying (check generated .py files)
+2. Backup database before applying migrations to production
+3. Test on development environment first
+4. Never edit already-applied migrations
+
+═══════════════════════════════════════════════════════════════════
+
+For detailed instructions, see: STEP_BY_STEP_MIGRATIONS.md
+For quick reference, see: COMMAND.md
+For full guide, see: MIGRATIONS_README.md
+

@@ -1,31 +1,67 @@
-# HRMS (Human Resource Management System) API Documentation
+# HRMS Backend API Documentation
 
-A comprehensive REST API for managing human resources, employee attendance, leave management, and holiday tracking.
+Comprehensive Human Resource Management System backend API built with FastAPI, PostgreSQL, and async SQLAlchemy.
 
-## Table of Contents
+## 📋 Table of Contents
 
-- [Base URL](#base-url)
+- [Overview](#overview)
+- [Base URL & Documentation](#base-url--documentation)
 - [Authentication](#authentication)
 - [API Endpoints](#api-endpoints)
-  - [Authentication Endpoints](#authentication-endpoints)
-  - [User Management Endpoints](#user-management-endpoints)
-  - [Leave Management Endpoints](#leave-management-endpoints)
-  - [Time Tracking Endpoints](#time-tracking-endpoints)
-  - [Holiday Management Endpoints](#holiday-management-endpoints)
-  - [Admin Management Endpoints](#admin-management-endpoints)
+  - [Authentication](#authentication-endpoints)
+  - [Users](#users-endpoints)
+  - [Leaves](#leaves-endpoints)
+  - [Holidays](#holidays-endpoints)
+  - [Tasks](#tasks-endpoints)
+  - [Employees](#employees-endpoints)
+  - [Admin](#admin-endpoints)
+  - [Email Management](#email-management-endpoints)
 - [Data Models](#data-models)
 - [Error Handling](#error-handling)
-- [Rate Limiting](#rate-limiting)
+- [Migration Guide](#migration-guide)
 
-## Base URL
+---
+
+## Overview
+
+**Version:** 1.0.0  
+**Framework:** FastAPI 0.104.1  
+**Database:** PostgreSQL with asyncpg  
+**ORM:** SQLAlchemy 2.0 (async)
+
+### Features
+- ✅ User authentication with JWT
+- ✅ Role-based access control (User, Admin, Super Admin)
+- ✅ Leave management with half-day support
+- ✅ Holiday tracking
+- ✅ Task management
+- ✅ Employee details & employment history
+- ✅ Document uploads (Profile, Aadhaar, PAN)
+- ✅ Email notifications
+- ✅ Admin dashboard
+- ✅ Database migrations (Alembic)
+
+---
+
+## Base URL & Documentation
 
 ```
 http://localhost:8000
 ```
 
+### Interactive Documentation
+- **Swagger UI:** http://localhost:8000/docs
+- **ReDoc:** http://localhost:8000/redoc
+
+---
+
 ## Authentication
 
-The API uses JWT (JSON Web Token) for authentication. Include the token in the Authorization header:
+The API uses **JWT (JSON Web Token)** for authentication.
+
+### How to Authenticate
+
+Include the token in the Authorization header:
 
 ```
 Authorization: Bearer <your_jwt_token>
@@ -33,9 +69,11 @@ Authorization: Bearer <your_jwt_token>
 
 ### User Roles
 
-- **USER**: Regular employee with basic permissions
+- **USER**: Regular employee
 - **ADMIN**: Administrative user with management permissions
 - **SUPER_ADMIN**: Super administrator with full system access
+
+---
 
 ## API Endpoints
 
@@ -58,7 +96,7 @@ Register a new user with default USER role.
 }
 ```
 
-**Response:**
+**Response:** 200 OK
 ```json
 {
   "id": 1,
@@ -69,15 +107,16 @@ Register a new user with default USER role.
   "joining_date": "2024-01-15",
   "role": "user",
   "is_active": true,
-  "created_at": "2024-01-15T10:30:00Z",
-  "updated_at": null
+  "created_at": "2024-01-15T10:30:00Z"
 }
 ```
 
-#### Login User
+---
+
+#### Login
 **POST** `/auth/login`
 
-Authenticate user and receive access token.
+Authenticate user and receive JWT token.
 
 **Request Body:**
 ```json
@@ -87,7 +126,7 @@ Authenticate user and receive access token.
 }
 ```
 
-**Response:**
+**Response:** 200 OK
 ```json
 {
   "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
@@ -96,92 +135,60 @@ Authenticate user and receive access token.
     "id": 1,
     "email": "user@example.com",
     "name": "John Doe",
-    "phone": "+1234567890",
-    "role": "user",
-    "is_active": true,
-    "created_at": "2024-01-15T10:30:00Z",
-    "updated_at": null
+    "role": "user"
   }
 }
 ```
 
-#### Get Current User Profile
+---
+
+#### Get Current User
 **GET** `/auth/me`
 
-Get current authenticated user information.
+**Headers:** `Authorization: Bearer <token>`
 
-**Headers:**
-```
-Authorization: Bearer <token>
-```
+**Response:** 200 OK - UserResponse object
 
-**Response:**
-```json
-{
-  "id": 1,
-  "email": "user@example.com",
-  "name": "John Doe",
-  "phone": "+1234567890",
-  "designation": "Software Developer",
-  "joining_date": "2024-01-15",
-  "role": "user",
-  "is_active": true,
-  "created_at": "2024-01-15T10:30:00Z",
-  "updated_at": null
-}
-```
+---
+
+#### Get Profile
+**GET** `/auth/profile`
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response:** 200 OK - UserResponse object
+
+---
 
 #### Update Profile
 **PUT** `/auth/profile`
 
-Update current user's profile information.
-
-**Headers:**
-```
-Authorization: Bearer <token>
-```
+**Headers:** `Authorization: Bearer <token>`
 
 **Request Body:**
 ```json
 {
   "name": "John Smith",
   "phone": "+1234567891",
-  "designation": "Senior Software Developer",
+  "designation": "Senior Developer",
   "joining_date": "2024-01-15"
 }
 ```
 
-**Response:**
-```json
-{
-  "id": 1,
-  "email": "user@example.com",
-  "name": "John Smith",
-  "phone": "+1234567891",
-  "designation": "Senior Software Developer",
-  "joining_date": "2024-01-15",
-  "role": "user",
-  "is_active": true,
-  "created_at": "2024-01-15T10:30:00Z",
-  "updated_at": "2024-01-15T11:00:00Z"
-}
-```
+**Response:** 200 OK - Updated UserResponse
+
+---
 
 #### Register Admin (Super Admin Only)
 **POST** `/auth/register-admin`
 
-Register a new admin user (requires super admin privileges).
-
-**Headers:**
-```
-Authorization: Bearer <super_admin_token>
-```
+**Headers:** `Authorization: Bearer <super_admin_token>`
 
 **Request Body:**
 ```json
 {
   "email": "admin@example.com",
-  "password": "adminpassword123",
+  "password": "adminpass123",
   "name": "Admin User",
   "phone": "+1234567892",
   "designation": "HR Manager",
@@ -189,214 +196,267 @@ Authorization: Bearer <super_admin_token>
 }
 ```
 
-**Response:**
-```json
-{
-  "id": 2,
-  "email": "admin@example.com",
-  "name": "Admin User",
-  "phone": "+1234567892",
-  "designation": "HR Manager",
-  "joining_date": "2024-01-01",
-  "role": "admin",
-  "is_active": true,
-  "created_at": "2024-01-15T10:30:00Z",
-  "updated_at": null
-}
-```
+**Response:** 200 OK - UserResponse with role="admin"
 
-### User Management Endpoints
+---
 
-#### Get User Profile
+### Users Endpoints
+
+#### Get My Profile
 **GET** `/users/profile`
 
-Get current user's profile (same as `/auth/me`).
+**Headers:** `Authorization: Bearer <token>`
 
-**Headers:**
-```
-Authorization: Bearer <token>
-```
+**Response:** 200 OK - UserResponse
 
-#### Update User Profile
+---
+
+#### Update My Profile
 **PUT** `/users/profile`
 
-Update current user's profile (same as `/auth/profile`).
+**Headers:** `Authorization: Bearer <token>`
 
-**Headers:**
-```
-Authorization: Bearer <token>
-```
+**Request Body:** (Same as PUT /auth/profile)
+
+---
 
 #### List All Users (Admin Only)
 **GET** `/users?offset=0&limit=10`
 
-Get paginated list of all users.
-
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
+**Headers:** `Authorization: Bearer <admin_token>`
 
 **Query Parameters:**
-- `offset` (optional): Number of records to skip (default: 0)
-- `limit` (optional): Maximum number of records to return (default: 10)
+- `offset` (int, default: 0)
+- `limit` (int, default: 10)
 
-**Response:**
-```json
-[
-  {
-    "id": 1,
-    "email": "user@example.com",
-    "name": "John Doe",
-    "phone": "+1234567890",
-    "designation": "Software Developer",
-    "joining_date": "2024-01-15",
-    "role": "user",
-    "is_active": true,
-    "created_at": "2024-01-15T10:30:00Z",
-    "updated_at": null
-  }
-]
-```
+**Response:** 200 OK - List[UserResponse]
+
+---
 
 #### Get User by ID (Admin Only)
 **GET** `/users/{user_id}`
 
-Get specific user by ID.
+**Headers:** `Authorization: Bearer <admin_token>`
 
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
+**Response:** 200 OK - UserResponse
 
-**Response:**
+---
+
+#### Upload Profile Image
+**POST** `/users/upload-profile-image`
+
+**Content-Type:** `multipart/form-data`
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Body:** File upload (JPG, PNG, PDF, max 10MB)
+
+**Response:** 200 OK
 ```json
 {
-  "id": 1,
-  "email": "user@example.com",
-  "name": "John Doe",
-  "phone": "+1234567890",
-  "designation": "Software Developer",
-  "joining_date": "2024-01-15",
-  "role": "user",
-  "is_active": true,
-  "created_at": "2024-01-15T10:30:00Z",
-  "updated_at": null
+  "filename": "photo.jpg",
+  "file_path": "uploads/1_profile_uuid.jpg",
+  "file_size": 123456,
+  "content_type": "image/jpeg"
 }
 ```
 
-### Leave Management Endpoints
+**Note:** Profile images are auto-approved.
+
+---
+
+#### Upload Aadhaar Front
+**POST** `/users/upload-aadhaar-front`
+
+**Content-Type:** `multipart/form-data`
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Status:** Pending (requires admin approval)
+
+---
+
+#### Upload Aadhaar Back
+**POST** `/users/upload-aadhaar-back`
+
+**Content-Type:** `multipart/form-data`
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Status:** Pending
+
+---
+
+#### Upload PAN
+**POST** `/users/upload-pan`
+
+**Content-Type:** `multipart/form-data`
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Status:** Pending
+
+---
+
+#### Get My Employee Details
+**GET** `/users/my-employee-details`
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response:** 200 OK - EmployeeDetailsResponse or null
+
+---
+
+#### Get My Employment History
+**GET** `/users/my-employment-history`
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response:** 200 OK - List[EmploymentHistoryResponse]
+
+---
+
+#### Get My Employee Summary
+**GET** `/users/my-employee-summary`
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response:** 200 OK - EmployeeSummary
+
+---
+
+#### Get Department Colleagues
+**GET** `/users/my-department-colleagues`
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response:** 200 OK
+```json
+{
+  "department": "Engineering",
+  "colleagues": [
+    {
+      "id": 2,
+      "name": "Jane Smith",
+      "email": "jane@example.com",
+      "designation": "Senior Developer"
+    }
+  ]
+}
+```
+
+---
+
+#### Get My Manager
+**GET** `/users/my-manager`
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response:** 200 OK
+```json
+{
+  "manager": {
+    "id": 5,
+    "name": "Manager Name",
+    "email": "manager@example.com",
+    "designation": "Engineering Manager",
+    "phone": "+1234567890"
+  }
+}
+```
+
+---
+
+### Leaves Endpoints
 
 #### Apply for Leave
 **POST** `/leaves`
 
-Submit a new leave application.
-
-**Headers:**
-```
-Authorization: Bearer <token>
-```
+**Headers:** `Authorization: Bearer <token>`
 
 **Request Body:**
 ```json
 {
   "start_date": "2024-02-01T00:00:00Z",
   "end_date": "2024-02-03T00:00:00Z",
+  "total_days": 3.0,
   "reason": "Family vacation"
 }
 ```
 
-**Response:**
+**Response:** 200 OK
 ```json
 {
   "id": 1,
   "user_id": 1,
   "start_date": "2024-02-01T00:00:00Z",
   "end_date": "2024-02-03T00:00:00Z",
+  "total_days": 3.0,
   "reason": "Family vacation",
   "status": "pending",
-  "created_at": "2024-01-15T10:30:00Z",
-  "updated_at": null
+  "created_at": "2024-01-15T10:30:00Z"
 }
 ```
+
+**Notes:**
+- Supports half-days (0.5 increments): 1.0, 1.5, 2.0, 2.5
+- Dates must be timezone-aware
+- Cannot apply for past dates
+- Overlapping leaves prevented
+
+---
 
 #### Get My Leaves
 **GET** `/leaves/my-leaves?offset=0&limit=10`
 
-Get current user's leave applications.
-
-**Headers:**
-```
-Authorization: Bearer <token>
-```
+**Headers:** `Authorization: Bearer <token>`
 
 **Query Parameters:**
-- `offset` (optional): Number of records to skip (default: 0)
-- `limit` (optional): Maximum number of records to return (default: 10)
+- `offset` (int, default: 0)
+- `limit` (int, default: 10)
 
-**Response:**
-```json
-[
-  {
-    "id": 1,
-    "user_id": 1,
-    "start_date": "2024-02-01T00:00:00Z",
-    "end_date": "2024-02-03T00:00:00Z",
-    "reason": "Family vacation",
-    "status": "pending",
-    "created_at": "2024-01-15T10:30:00Z",
-    "updated_at": null
-  }
-]
-```
+**Response:** 200 OK - List[LeaveResponse]
+
+---
 
 #### Get All Leaves (Admin Only)
 **GET** `/leaves?offset=0&limit=10`
 
-Get all leave applications with user information.
+**Headers:** `Authorization: Bearer <admin_token>`
 
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
+**Response:** 200 OK - List[LeaveResponse with user info]
 
-**Response:**
+---
+
+#### Update Leave
+**PUT** `/leaves/{leave_id}`
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request Body:**
 ```json
-[
-  {
-    "id": 1,
-    "user_id": 1,
-    "start_date": "2024-02-01T00:00:00Z",
-    "end_date": "2024-02-03T00:00:00Z",
-    "reason": "Family vacation",
-    "status": "pending",
-    "created_at": "2024-01-15T10:30:00Z",
-    "updated_at": null,
-    "user": {
-      "id": 1,
-      "email": "user@example.com",
-      "name": "John Doe",
-      "phone": "+1234567890",
-      "designation": "Software Developer",
-      "joining_date": "2024-01-15",
-      "role": "user",
-      "is_active": true,
-      "created_at": "2024-01-15T10:30:00Z",
-      "updated_at": null
-    }
-  }
-]
+{
+  "start_date": "2024-02-02T00:00:00Z",
+  "end_date": "2024-02-04T00:00:00Z",
+  "total_days": 2.5,
+  "reason": "Updated reason",
+  "status": "approved"
+}
 ```
+
+**Notes:**
+- Users can only edit pending leaves
+- Admins can edit any leave
+- Only admins can change status
+
+**Response:** 200 OK - LeaveResponse
+
+---
 
 #### Update Leave Status (Admin Only)
 **PUT** `/leaves/{leave_id}/status`
 
-Update leave application status (approve/reject).
-
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
+**Headers:** `Authorization: Bearer <admin_token>`
 
 **Request Body:**
 ```json
@@ -405,437 +465,286 @@ Authorization: Bearer <admin_token>
 }
 ```
 
-**Response:**
-```json
-{
-  "id": 1,
-  "user_id": 1,
-  "start_date": "2024-02-01T00:00:00Z",
-  "end_date": "2024-02-03T00:00:00Z",
-  "reason": "Family vacation",
-  "status": "approved",
-  "created_at": "2024-01-15T10:30:00Z",
-  "updated_at": "2024-01-15T11:00:00Z"
-}
-```
+**Status values:** `pending`, `approved`, `rejected`
+
+**Response:** 200 OK - LeaveResponse
+
+---
 
 #### Get Leave by ID
 **GET** `/leaves/{leave_id}`
 
-Get specific leave application by ID.
+**Headers:** `Authorization: Bearer <token>`
 
-**Headers:**
-```
-Authorization: Bearer <token>
-```
+**Response:** 200 OK - LeaveResponse
 
-**Response:**
-```json
-{
-  "id": 1,
-  "user_id": 1,
-  "start_date": "2024-02-01T00:00:00Z",
-  "end_date": "2024-02-03T00:00:00Z",
-  "reason": "Family vacation",
-  "status": "approved",
-  "created_at": "2024-01-15T10:30:00Z",
-  "updated_at": "2024-01-15T11:00:00Z",
-  "user": {
-    "id": 1,
-    "email": "user@example.com",
-    "name": "John Doe",
-    "phone": "+1234567890",
-    "designation": "Software Developer",
-    "joining_date": "2024-01-15",
-    "role": "user",
-    "is_active": true,
-    "created_at": "2024-01-15T10:30:00Z",
-    "updated_at": null
-  }
-}
-```
+---
 
-### Time Tracking Endpoints
-
-#### Check In
-**POST** `/trackers/check-in`
-
-Record check-in time for the current day.
-
-**Headers:**
-```
-Authorization: Bearer <token>
-```
-
-**Response:**
-```json
-{
-  "id": 1,
-  "user_id": 1,
-  "check_in": "2024-01-15T09:00:00Z",
-  "check_out": null,
-  "date": "2024-01-15T00:00:00Z",
-  "created_at": "2024-01-15T09:00:00Z",
-  "updated_at": "2024-01-15T09:00:00Z"
-}
-```
-
-#### Check Out
-**POST** `/trackers/check-out`
-
-Record check-out time for the current day.
-
-**Headers:**
-```
-Authorization: Bearer <token>
-```
-
-**Response:**
-```json
-{
-  "id": 1,
-  "user_id": 1,
-  "check_in": "2024-01-15T09:00:00Z",
-  "check_out": "2024-01-15T17:00:00Z",
-  "date": "2024-01-15T00:00:00Z",
-  "created_at": "2024-01-15T09:00:00Z",
-  "updated_at": "2024-01-15T17:00:00Z"
-}
-```
-
-#### Get My Tracking Records
-**GET** `/trackers/my-tracking?offset=0&limit=10`
-
-Get current user's time tracking records.
-
-**Headers:**
-```
-Authorization: Bearer <token>
-```
-
-**Query Parameters:**
-- `offset` (optional): Number of records to skip (default: 0)
-- `limit` (optional): Maximum number of records to return (default: 10)
-
-**Response:**
-```json
-[
-  {
-    "id": 1,
-    "user_id": 1,
-    "check_in": "2024-01-15T09:00:00Z",
-    "check_out": "2024-01-15T17:00:00Z",
-    "date": "2024-01-15T00:00:00Z",
-    "created_at": "2024-01-15T09:00:00Z",
-    "updated_at": "2024-01-15T17:00:00Z"
-  }
-]
-```
-
-#### Get Today's Tracking
-**GET** `/trackers/today`
-
-Get today's tracking record for current user.
-
-**Headers:**
-```
-Authorization: Bearer <token>
-```
-
-**Response:**
-```json
-{
-  "id": 1,
-  "user_id": 1,
-  "check_in": "2024-01-15T09:00:00Z",
-  "check_out": null,
-  "date": "2024-01-15T00:00:00Z",
-  "created_at": "2024-01-15T09:00:00Z",
-  "updated_at": "2024-01-15T09:00:00Z"
-}
-```
-
-#### Get Today's Status
-**GET** `/trackers/today-status`
-
-Get today's status with calculated total hours.
-
-**Headers:**
-```
-Authorization: Bearer <token>
-```
-
-**Response:**
-```json
-{
-  "check_in_time": "2024-01-15T09:00:00Z",
-  "check_out_time": "2024-01-15T17:00:00Z",
-  "total_hours": 8.0
-}
-```
-
-#### Get My Attendance
-**GET** `/trackers/my-attendance?offset=0&limit=30`
-
-Get current user's attendance history with calculated hours.
-
-**Headers:**
-```
-Authorization: Bearer <token>
-```
-
-**Response:**
-```json
-[
-  {
-    "id": 1,
-    "user_id": 1,
-    "check_in": "2024-01-15T09:00:00Z",
-    "check_out": "2024-01-15T17:00:00Z",
-    "date": "2024-01-15T00:00:00Z",
-    "created_at": "2024-01-15T09:00:00Z",
-    "updated_at": "2024-01-15T17:00:00Z",
-    "total_hours": 8.0
-  }
-]
-```
-
-#### Get All Tracking Records (Admin Only)
-**GET** `/trackers?offset=0&limit=10`
-
-Get all tracking records with user information.
-
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
-
-**Response:**
-```json
-[
-  {
-    "id": 1,
-    "user_id": 1,
-    "check_in": "2024-01-15T09:00:00Z",
-    "check_out": "2024-01-15T17:00:00Z",
-    "date": "2024-01-15T00:00:00Z",
-    "created_at": "2024-01-15T09:00:00Z",
-    "updated_at": "2024-01-15T17:00:00Z",
-    "user": {
-      "id": 1,
-      "email": "user@example.com",
-      "name": "John Doe",
-      "phone": "+1234567890",
-      "designation": "Software Developer",
-      "joining_date": "2024-01-15",
-      "role": "user",
-      "is_active": true,
-      "created_at": "2024-01-15T10:30:00Z",
-      "updated_at": null
-    }
-  }
-]
-```
-
-#### Get User Tracking (Admin Only)
-**GET** `/trackers/user/{user_id}?offset=0&limit=10`
-
-Get tracking records for specific user.
-
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
-
-### Holiday Management Endpoints
+### Holidays Endpoints
 
 #### Create Holiday (Admin Only)
 **POST** `/holidays`
 
-Create a new holiday.
-
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
+**Headers:** `Authorization: Bearer <admin_token>`
 
 **Request Body:**
 ```json
 {
-  "date": "2024-12-25",
-  "title": "Christmas Day",
-  "description": "Official holiday"
-}
-```
-
-**Note:** Date should be in `YYYY-MM-DD` format (date string) or `YYYY-MM-DDTHH:MM:SS` format (datetime string).
-
-**Response:**
-```json
-{
-  "id": 1,
   "date": "2024-12-25T00:00:00Z",
   "title": "Christmas Day",
   "description": "Official holiday",
-  "created_at": "2024-01-15T10:30:00Z",
-  "updated_at": null
+  "is_active": true
 }
 ```
+
+**Response:** 200 OK - HolidayResponse
+
+---
 
 #### Get All Holidays
 **GET** `/holidays?offset=0&limit=10`
 
-Get paginated list of all holidays.
+**Headers:** `Authorization: Bearer <token>`
 
-**Headers:**
-```
-Authorization: Bearer <token>
-```
+**Response:** 200 OK - List[HolidayResponse]
 
-**Response:**
-```json
-[
-  {
-    "id": 1,
-    "date": "2024-12-25T00:00:00Z",
-    "title": "Christmas Day",
-    "description": "Official holiday",
-    "created_at": "2024-01-15T10:30:00Z",
-    "updated_at": null
-  }
-]
-```
+---
 
 #### Get Upcoming Holidays
 **GET** `/holidays/upcoming`
 
-Get all upcoming holidays.
+**Headers:** `Authorization: Bearer <token>`
 
-**Headers:**
-```
-Authorization: Bearer <token>
-```
+**Response:** 200 OK - List[HolidayResponse]
 
-**Response:**
-```json
-[
-  {
-    "id": 1,
-    "date": "2024-12-25T00:00:00Z",
-    "title": "Christmas Day",
-    "description": "Official holiday",
-    "created_at": "2024-01-15T10:30:00Z",
-    "updated_at": null
-  }
-]
-```
+---
 
 #### Get Holiday by ID
 **GET** `/holidays/{holiday_id}`
 
-Get specific holiday by ID.
+**Headers:** `Authorization: Bearer <token>`
 
-**Headers:**
-```
-Authorization: Bearer <token>
-```
+**Response:** 200 OK - HolidayResponse
 
-**Response:**
-```json
-{
-  "id": 1,
-  "date": "2024-12-25T00:00:00Z",
-  "title": "Christmas Day",
-  "description": "Official holiday",
-  "created_at": "2024-01-15T10:30:00Z",
-  "updated_at": null
-}
-```
+---
 
 #### Update Holiday (Admin Only)
 **PUT** `/holidays/{holiday_id}`
 
-Update holiday information.
-
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
+**Headers:** `Authorization: Bearer <admin_token>`
 
 **Request Body:**
 ```json
 {
-  "date": "2024-12-25",
   "title": "Christmas Day - Updated",
-  "description": "Official holiday - Updated description"
+  "description": "Updated description",
+  "is_active": false
 }
 ```
 
-**Note:** All fields are optional. Date should be in `YYYY-MM-DD` format if provided.
+**Response:** 200 OK - HolidayResponse
 
-**Response:**
-```json
-{
-  "id": 1,
-  "date": "2024-12-25T00:00:00Z",
-  "title": "Christmas Day - Updated",
-  "description": "Official holiday - Updated description",
-  "created_at": "2024-01-15T10:30:00Z",
-  "updated_at": "2024-01-15T11:00:00Z"
-}
-```
+---
 
 #### Delete Holiday (Admin Only)
 **DELETE** `/holidays/{holiday_id}`
 
-Delete a holiday.
+**Headers:** `Authorization: Bearer <admin_token>`
 
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
-
-**Response:**
+**Response:** 200 OK
 ```json
 {
   "message": "Holiday deleted successfully"
 }
 ```
 
-### Admin Management Endpoints
+---
 
-#### Get Dashboard Statistics (Admin Only)
+### Tasks Endpoints
+
+#### Create Task
+**POST** `/tasks`
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request Body:**
+```json
+{
+  "name": "Complete project documentation",
+  "description": "Write comprehensive API docs",
+  "due_date": "2024-02-15T00:00:00Z",
+  "priority": "high",
+  "category": "work"
+}
+```
+
+**Priority values:** `low`, `medium`, `high`, `urgent`
+
+**Response:** 200 OK - TaskResponse
+
+---
+
+#### Get My Tasks
+**GET** `/tasks/my-tasks?status=pending&priority=high&category=work&overdue_only=false`
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Query Parameters:**
+- `status` (optional): `pending`, `in_progress`, `completed`, `cancelled`
+- `priority` (optional): `low`, `medium`, `high`, `urgent`
+- `category` (optional): Filter by category
+- `overdue_only` (bool, default: false): Show only overdue tasks
+
+**Response:** 200 OK - List[TaskResponse]
+
+---
+
+#### Update Task
+**PUT** `/tasks/{task_id}`
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request Body:**
+```json
+{
+  "name": "Updated task name",
+  "status": "in_progress",
+  "priority": "urgent",
+  "due_date": "2024-03-15T00:00:00Z"
+}
+```
+
+**Response:** 200 OK - TaskResponse
+
+---
+
+#### Delete Task
+**DELETE** `/tasks/{task_id}`
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response:** 200 OK - Soft delete (sets is_active=false)
+
+---
+
+#### Get Task Summary
+**GET** `/tasks/summary`
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Response:** 200 OK
+```json
+{
+  "total_tasks": 25,
+  "pending_tasks": 10,
+  "in_progress_tasks": 5,
+  "completed_tasks": 8,
+  "cancelled_tasks": 2,
+  "overdue_tasks": 3
+}
+```
+
+---
+
+### Employees Endpoints
+
+#### Create Employee Details (Admin Only)
+**POST** `/employees/details`
+
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Request Body:**
+```json
+{
+  "user_id": 1,
+  "employee_id": "EMP001",
+  "department": "Engineering",
+  "employment_type": "Full-time",
+  "work_location": "Mumbai Office",
+  "basic_salary": "50000",
+  "currency": "INR",
+  "manager_id": 5
+}
+```
+
+**Response:** 200 OK - EmployeeDetailsResponse
+
+---
+
+#### Get Employee Details (Admin Only)
+**GET** `/employees/details/{user_id}`
+
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Response:** 200 OK - EmployeeDetailsResponse
+
+---
+
+#### Update Employee Details (Admin Only)
+**PUT** `/employees/details/{user_id}`
+
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Request Body:** All fields optional
+
+**Response:** 200 OK - EmployeeDetailsResponse
+
+---
+
+#### Create Employment History (Admin Only)
+**POST** `/employees/employment-history`
+
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Request Body:**
+```json
+{
+  "user_id": 1,
+  "position_title": "Senior Developer",
+  "department": "Engineering",
+  "start_date": "2024-01-15",
+  "salary": "60000",
+  "currency": "INR",
+  "is_current": true
+}
+```
+
+**Response:** 200 OK - EmploymentHistoryResponse
+
+---
+
+#### Get Employment History (Admin Only)
+**GET** `/employees/employment-history/{user_id}`
+
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Response:** 200 OK - List[EmploymentHistoryResponse]
+
+---
+
+### Admin Endpoints
+
+#### Get Dashboard Statistics
 **GET** `/admin/dashboard`
 
-Get dashboard statistics including total users, active users, pending leaves, and upcoming holidays.
+**Headers:** `Authorization: Bearer <admin_token>`
 
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
-
-**Response:**
+**Response:** 200 OK
 ```json
 {
   "total_users": 50,
-  "active_users_today": 45,
+  "active_users": 45,
   "pending_leaves": 12,
   "upcoming_holidays": 3
 }
 ```
 
+---
+
 #### Create User (Admin Only)
-**POST** `/admin/users?role=user`
+**POST** `/admin/users`
 
-Create a new user with specified role.
-
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
-
-**Query Parameters:**
-- `role` (optional): User role - "user" or "admin" (default: "user")
+**Headers:** `Authorization: Bearer <admin_token>`
 
 **Request Body:**
 ```json
@@ -843,546 +752,333 @@ Authorization: Bearer <admin_token>
   "email": "newuser@example.com",
   "password": "password123",
   "name": "New User",
-  "phone": "+1234567893",
+  "phone": "+1234567890",
   "designation": "Junior Developer",
   "joining_date": "2024-01-20"
 }
 ```
 
-**Response:**
+**Response:** 200 OK - UserResponse
+
+---
+
+#### Update User (Admin Only)
+**PUT** `/admin/users/{user_id}`
+
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Request Body:** AdminUserUpdate (all fields optional)
+
+**Response:** 200 OK - UserResponse
+
+---
+
+#### Activate User
+**PUT** `/admin/users/{user_id}/activate`
+
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Response:** 200 OK
+
+---
+
+#### Deactivate User
+**PUT** `/admin/users/{user_id}/deactivate`
+
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Response:** 200 OK
+
+---
+
+#### Delete User
+**DELETE** `/admin/users/{user_id}`
+
+**Headers:** `Authorization: Bearer <admin_token>`
+
+**Response:** 200 OK
+
+**Note:** Cannot delete super admin or your own account
+
+---
+
+#### Upload Document for User (Super Admin Only)
+**POST** `/admin/users/{user_id}/upload-profile-image`
+**POST** `/admin/users/{user_id}/upload-aadhaar-front`
+**POST** `/admin/users/{user_id}/upload-aadhaar-back`
+**POST** `/admin/users/{user_id}/upload-pan`
+
+**Content-Type:** `multipart/form-data`
+
+**Headers:** `Authorization: Bearer <super_admin_token>`
+
+**Response:** 200 OK - FileUploadResponse
+
+---
+
+### Email Management Endpoints
+
+#### Get Email Settings (Super Admin Only)
+**GET** `/email/settings`
+
+**Headers:** `Authorization: Bearer <super_admin_token>`
+
+**Response:** 200 OK - EmailSettingsResponse
+
+---
+
+#### Create Email Settings (Super Admin Only)
+**POST** `/email/settings`
+
+**Headers:** `Authorization: Bearer <super_admin_token>`
+
+**Request Body:**
 ```json
 {
-  "id": 3,
-  "email": "newuser@example.com",
-  "name": "New User",
-  "phone": "+1234567893",
-  "designation": "Junior Developer",
-  "joining_date": "2024-01-20",
+  "smtp_server": "smtp.gmail.com",
+  "smtp_port": 587,
+  "smtp_username": "your-email@gmail.com",
+  "smtp_password": "your-password",
+  "smtp_use_tls": true,
+  "smtp_use_ssl": false,
+  "from_email": "your-email@gmail.com",
+  "from_name": "HRMS System"
+}
+```
+
+**Response:** 200 OK - EmailSettingsResponse
+
+---
+
+#### Update Email Settings (Super Admin Only)
+**PUT** `/email/settings/{settings_id}`
+
+**Headers:** `Authorization: Bearer <super_admin_token>`
+
+**Request Body:** EmailSettingsUpdate (all fields optional)
+
+**Response:** 200 OK - EmailSettingsResponse
+
+---
+
+#### Test Email Connection (Super Admin Only)
+**POST** `/email/settings/test-connection`
+
+**Headers:** `Authorization: Bearer <super_admin_token>`
+
+**Response:** 200 OK
+```json
+{
+  "success": true,
+  "message": "Connection test successful"
+}
+```
+
+---
+
+#### Get Email Templates (Super Admin Only)
+**GET** `/email/templates`
+
+**Headers:** `Authorization: Bearer <super_admin_token>`
+
+**Response:** 200 OK - List[EmailTemplateResponse]
+
+---
+
+#### Create Email Template (Super Admin Only)
+**POST** `/email/templates`
+
+**Headers:** `Authorization: Bearer <super_admin_token>`
+
+**Request Body:**
+```json
+{
+  "name": "welcome_email",
+  "subject": "Welcome to HRMS",
+  "body": "Welcome {{name}}!",
+  "template_type": "welcome",
+  "is_active": true
+}
+```
+
+**Response:** 200 OK - EmailTemplateResponse
+
+---
+
+#### Update Email Template (Super Admin Only)
+**PUT** `/email/templates/{template_id}`
+
+**Headers:** `Authorization: Bearer <super_admin_token>`
+
+**Request Body:** EmailTemplateUpdate
+
+**Response:** 200 OK - EmailTemplateResponse
+
+---
+
+#### Delete Email Template (Super Admin Only)
+**DELETE** `/email/templates/{template_id}`
+
+**Headers:** `Authorization: Bearer <super_admin_token>`
+
+**Response:** 200 OK
+```json
+{
+  "message": "Template deleted successfully"
+}
+```
+
+---
+
+#### Send Email (Super Admin Only)
+**POST** `/email/send`
+
+**Headers:** `Authorization: Bearer <super_admin_token>`
+
+**Request Body:**
+```json
+{
+  "recipient_email": "user@example.com",
+  "recipient_name": "John Doe",
+  "subject": "Welcome",
+  "body": "Welcome to HRMS!",
+  "template_type": "welcome"
+}
+```
+
+**Response:** 200 OK
+```json
+{
+  "success": true,
+  "message": "Email sent successfully"
+}
+```
+
+---
+
+#### Send Bulk Emails (Super Admin Only)
+**POST** `/email/send-bulk`
+
+**Headers:** `Authorization: Bearer <super_admin_token>`
+
+**Request Body:**
+```json
+{
+  "recipient_emails": ["user1@example.com", "user2@example.com"],
+  "recipient_names": ["User 1", "User 2"],
+  "subject": "Announcement",
+  "body": "Important announcement",
+  "template_type": "announcement"
+}
+```
+
+**Response:** 200 OK - Bulk send results
+
+---
+
+#### Get Email Logs (Super Admin Only)
+**GET** `/email/logs?offset=0&limit=10&status_filter=sent`
+
+**Headers:** `Authorization: Bearer <super_admin_token>`
+
+**Query Parameters:**
+- `offset` (int, default: 0)
+- `limit` (int, default: 10, max: 100)
+- `status_filter` (optional): Filter by status
+
+**Response:** 200 OK - PaginatedResponse
+
+---
+
+#### Get Users for Email (Super Admin Only)
+**GET** `/email/users`
+
+**Headers:** `Authorization: Bearer <super_admin_token>`
+
+**Response:** 200 OK - List of active users with email and designation
+
+---
+
+## Data Models
+
+### UserResponse
+```json
+{
+  "id": 1,
+  "email": "user@example.com",
+  "name": "John Doe",
+  "phone": "+1234567890",
+  "designation": "Software Developer",
+  "joining_date": "2024-01-15",
   "role": "user",
   "is_active": true,
+  "profile_image": "uploads/1_profile_uuid.jpg",
+  "profile_image_status": "approved",
+  "aadhaar_front": "uploads/1_aadhaar_front_uuid.jpg",
+  "aadhaar_front_status": "pending",
   "created_at": "2024-01-15T10:30:00Z",
   "updated_at": null
 }
 ```
 
-#### Update User (Admin Only)
-**PUT** `/admin/users/{user_id}`
-
-Update user information.
-
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
-
-**Request Body:**
+### LeaveResponse
 ```json
 {
-  "name": "Updated Name",
-  "email": "updated@example.com",
-  "phone": "+1234567894",
-  "designation": "Senior Developer",
-  "role": "admin"
+  "id": 1,
+  "user_id": 1,
+  "start_date": "2024-02-01T00:00:00Z",
+  "end_date": "2024-02-03T00:00:00Z",
+  "total_days": 3.0,
+  "reason": "Family vacation",
+  "status": "pending",
+  "created_at": "2024-01-15T10:30:00Z"
 }
 ```
 
-**Response:**
+### HolidayResponse
 ```json
 {
-  "id": 3,
-  "email": "updated@example.com",
-  "name": "Updated Name",
-  "phone": "+1234567894",
-  "designation": "Senior Developer",
-  "joining_date": "2024-01-20",
-  "role": "admin",
+  "id": 1,
+  "date": "2024-12-25T00:00:00Z",
+  "title": "Christmas Day",
+  "description": "Official holiday",
   "is_active": true,
-  "created_at": "2024-01-15T10:30:00Z",
-  "updated_at": "2024-01-15T11:00:00Z"
+  "created_at": "2024-01-15T10:30:00Z"
 }
 ```
 
-#### Get All Users (Admin Only)
-**GET** `/admin/users?offset=0&limit=10`
-
-Get paginated list of all users.
-
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
-
-#### Get All Leaves (Admin Only)
-**GET** `/admin/leaves?offset=0&limit=10&status_filter=pending`
-
-Get all leave applications with optional status filter.
-
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
-
-**Query Parameters:**
-- `offset` (optional): Number of records to skip (default: 0)
-- `limit` (optional): Maximum number of records to return (default: 10)
-- `status_filter` (optional): Filter by status - "pending", "approved", "rejected"
-
-#### Get All Tracking Records (Admin Only)
-**GET** `/admin/tracking?offset=0&limit=10&date_filter=2024-01-15`
-
-Get all tracking records with optional date filter.
-
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
-
-**Query Parameters:**
-- `offset` (optional): Number of records to skip (default: 0)
-- `limit` (optional): Maximum number of records to return (default: 10)
-- `date_filter` (optional): Filter by specific date (YYYY-MM-DD format)
-
-#### Get User Summary (Admin Only)
-**GET** `/admin/user/{user_id}/summary`
-
-Get comprehensive summary for a specific user including leaves and tracking records.
-
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
-
-**Response:**
+### TaskResponse
 ```json
 {
-  "user": {
-    "id": 1,
-    "email": "user@example.com",
-    "name": "John Doe",
-    "phone": "+1234567890",
-    "designation": "Software Developer",
-    "joining_date": "2024-01-15",
-    "role": "user",
-    "is_active": true,
-    "created_at": "2024-01-15T10:30:00Z",
-    "updated_at": null
-  },
-  "leaves": {
-    "total": 5,
-    "approved": 3,
-    "pending": 1,
-    "rejected": 1,
-    "recent": [...]
-  },
-  "tracking": {
-    "recent_records": [...],
-    "total_records": 30
-  }
+  "id": 1,
+  "user_id": 1,
+  "name": "Complete documentation",
+  "description": "Write API docs",
+  "status": "pending",
+  "due_date": "2024-02-15T00:00:00Z",
+  "priority": "high",
+  "category": "work",
+  "is_active": true,
+  "created_at": "2024-01-15T10:30:00Z"
 }
 ```
 
-#### Approve Leave (Admin Only)
-**PUT** `/admin/leaves/{leave_id}/approve`
-
-Approve a leave application.
-
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
-
-**Response:**
-```json
-{
-  "message": "Leave approved successfully",
-  "leave": {
-    "id": 1,
-    "user_id": 1,
-    "start_date": "2024-02-01T00:00:00Z",
-    "end_date": "2024-02-03T00:00:00Z",
-    "reason": "Family vacation",
-    "status": "approved",
-    "created_at": "2024-01-15T10:30:00Z",
-    "updated_at": "2024-01-15T11:00:00Z"
-  }
-}
-```
-
-#### Reject Leave (Admin Only)
-**PUT** `/admin/leaves/{leave_id}/reject`
-
-Reject a leave application.
-
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
-
-**Response:**
-```json
-{
-  "message": "Leave rejected successfully",
-  "leave": {
-    "id": 1,
-    "user_id": 1,
-    "start_date": "2024-02-01T00:00:00Z",
-    "end_date": "2024-02-03T00:00:00Z",
-    "reason": "Family vacation",
-    "status": "rejected",
-    "created_at": "2024-01-15T10:30:00Z",
-    "updated_at": "2024-01-15T11:00:00Z"
-  }
-}
-```
-
-#### Get Pending Leaves (Admin Only)
-**GET** `/admin/leaves/pending?offset=0&limit=10`
-
-Get all pending leave applications.
-
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
-
-#### Create Bulk Holidays (Admin Only)
-**POST** `/admin/holidays/bulk`
-
-Create multiple holidays at once.
-
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
-
-**Request Body:**
-```json
-[
-  {
-    "date": "2024-12-25T00:00:00Z",
-    "title": "Christmas Day",
-    "description": "Official holiday"
-  },
-  {
-    "date": "2024-01-01T00:00:00Z",
-    "title": "New Year's Day",
-    "description": "Official holiday"
-  }
-]
-```
-
-**Response:**
-```json
-[
-  {
-    "id": 1,
-    "date": "2024-12-25T00:00:00Z",
-    "title": "Christmas Day",
-    "description": "Official holiday",
-    "created_at": "2024-01-15T10:30:00Z",
-    "updated_at": null
-  },
-  {
-    "id": 2,
-    "date": "2024-01-01T00:00:00Z",
-    "title": "New Year's Day",
-    "description": "Official holiday",
-    "created_at": "2024-01-15T10:30:00Z",
-    "updated_at": null
-  }
-]
-```
-
-#### Get Attendance Report (Admin Only)
-**GET** `/admin/reports/attendance?start_date=2024-01-01&end_date=2024-01-31`
-
-Get attendance report for date range.
-
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
-
-**Query Parameters:**
-- `start_date` (optional): Start date for report (YYYY-MM-DD format)
-- `end_date` (optional): End date for report (YYYY-MM-DD format)
-
-**Response:**
-```json
-{
-  "period": {
-    "start_date": "2024-01-01",
-    "end_date": "2024-01-31"
-  },
-  "attendance": [
-    {
-      "user": {
-        "id": 1,
-        "email": "user@example.com",
-        "name": "John Doe"
-      },
-      "records": [...]
-    }
-  ]
-}
-```
-
-#### Get All Holidays (Admin Only)
-**GET** `/admin/holidays?offset=0&limit=10`
-
-Get all holidays with admin privileges.
-
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
-
-#### Activate User (Admin Only)
-**PUT** `/admin/users/{user_id}/activate`
-
-Activate a user account.
-
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
-
-**Response:**
-```json
-{
-  "message": "User activated successfully",
-  "user": {
-    "id": 1,
-    "email": "user@example.com",
-    "name": "John Doe",
-    "is_active": true
-  }
-}
-```
-
-#### Deactivate User (Admin Only)
-**PUT** `/admin/users/{user_id}/deactivate`
-
-Deactivate a user account.
-
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
-
-**Response:**
-```json
-{
-  "message": "User deactivated successfully",
-  "user": {
-    "id": 1,
-    "email": "user@example.com",
-    "name": "John Doe",
-    "is_active": false
-  }
-}
-```
-
-#### Update User Role (Admin Only)
-**PUT** `/admin/users/{user_id}/role?new_role=admin`
-
-Update user role.
-
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
-
-**Query Parameters:**
-- `new_role`: New role - "user" or "admin"
-
-**Response:**
-```json
-{
-  "message": "User role updated to admin",
-  "user": {
-    "id": 1,
-    "email": "user@example.com",
-    "name": "John Doe",
-    "role": "admin"
-  }
-}
-```
-
-#### Toggle User Status (Admin Only)
-**PUT** `/admin/users/{user_id}/toggle-status`
-
-Toggle user active status.
-
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
-
-**Response:**
-```json
-{
-  "message": "User activated successfully",
-  "user": {
-    "id": 1,
-    "email": "user@example.com",
-    "name": "John Doe",
-    "is_active": true
-  }
-}
-```
-
-#### Promote User (Admin Only)
-**PUT** `/admin/users/{user_id}/promote`
-
-Promote user to admin role.
-
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
-
-**Response:**
-```json
-{
-  "message": "User promoted to admin successfully",
-  "user": {
-    "id": 1,
-    "email": "user@example.com",
-    "name": "John Doe",
-    "role": "admin"
-  }
-}
-```
-
-#### Delete User (Admin Only)
-**DELETE** `/admin/users/{user_id}`
-
-Delete a user account permanently. This will also delete all related records including:
-- User tracking records (check-in/check-out history)
-- Leave applications
-- Any other user-related data
-
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
-
-**Response:**
-```json
-{
-  "message": "User deleted successfully"
-}
-```
-
-**Note:** 
-- Cannot delete super admin users or your own account
-- This action is irreversible and will permanently delete all user data
-
-#### Get Leaves Report (Admin Only)
-**GET** `/admin/reports/leaves?start_date=2024-01-01&end_date=2024-01-31&status_filter=pending`
-
-Get comprehensive leaves report.
-
-**Headers:**
-```
-Authorization: Bearer <admin_token>
-```
-
-**Query Parameters:**
-- `start_date` (optional): Start date for report (YYYY-MM-DD format)
-- `end_date` (optional): End date for report (YYYY-MM-DD format)
-- `status_filter` (optional): Filter by status - "pending", "approved", "rejected"
-
-**Response:**
-```json
-{
-  "period": {
-    "start_date": "2024-01-01",
-    "end_date": "2024-01-31"
-  },
-  "statistics": {
-    "total": 25,
-    "approved": 20,
-    "pending": 3,
-    "rejected": 2
-  },
-  "leaves": [...]
-}
-```
-
-## Data Models
-
-### User
-```json
-{
-  "id": "integer",
-  "email": "string (email)",
-  "name": "string",
-  "phone": "string (optional)",
-  "designation": "string (optional)",
-  "joining_date": "date (optional)",
-  "role": "enum (user, admin, super_admin)",
-  "is_active": "boolean",
-  "created_at": "datetime",
-  "updated_at": "datetime (optional)"
-}
-```
-
-### Leave
-```json
-{
-  "id": "integer",
-  "user_id": "integer",
-  "start_date": "datetime",
-  "end_date": "datetime",
-  "reason": "string",
-  "status": "enum (pending, approved, rejected)",
-  "created_at": "datetime",
-  "updated_at": "datetime (optional)",
-  "user": "User (optional)"
-}
-```
-
-### Holiday
-```json
-{
-  "id": "integer",
-  "date": "datetime",
-  "title": "string",
-  "description": "string (optional)",
-  "created_at": "datetime",
-  "updated_at": "datetime (optional)"
-}
-```
-
-### UserTracker
-```json
-{
-  "id": "integer",
-  "user_id": "integer",
-  "check_in": "datetime (optional)",
-  "check_out": "datetime (optional)",
-  "date": "datetime",
-  "created_at": "datetime",
-  "updated_at": "datetime (optional)",
-  "user": "User (optional)",
-  "total_hours": "float (optional, calculated)"
-}
-```
+---
 
 ## Error Handling
 
-The API uses standard HTTP status codes:
+### HTTP Status Codes
 
-- **200 OK**: Request successful
-- **201 Created**: Resource created successfully
-- **400 Bad Request**: Invalid request data
-- **401 Unauthorized**: Authentication required
-- **403 Forbidden**: Insufficient permissions
-- **404 Not Found**: Resource not found
-- **422 Unprocessable Entity**: Validation error
-- **500 Internal Server Error**: Server error
+| Code | Meaning |
+|------|---------|
+| 200 | Success |
+| 201 | Created |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 422 | Validation Error |
+| 500 | Internal Server Error |
 
 ### Error Response Format
 ```json
@@ -1391,47 +1087,95 @@ The API uses standard HTTP status codes:
 }
 ```
 
-### Common Error Examples
+---
 
-#### 400 Bad Request
+## Migration Guide
+
+### Running Migrations
+
+#### Using Alembic (Recommended)
+```bash
+# Create migration
+python run_alembic_migration.py revision --autogenerate -m "Description"
+
+# Apply migrations
+python run_alembic_migration.py upgrade head
+
+# Check current version
+python run_alembic_migration.py current
+```
+
+#### Using Legacy Script
+```bash
+python run_migration.py
+```
+
+**For detailed migration documentation, see:**
+- `ALEMBIC_SETUP.md` - Alembic guide
+- `MIGRATIONS_README.md` - Quick start
+- `MIGRATION_QUICK_REFERENCE.md` - Command reference
+
+---
+
+## Important Notes
+
+### Date/Time Format
+- All datetimes must be timezone-aware (ISO 8601 with timezone)
+- Example: `2024-01-15T10:30:00Z`
+- Supports multiple date formats (YYYY-MM-DD, MM/DD/YYYY, etc.)
+
+### File Uploads
+- Maximum size: 10MB
+- Allowed formats: JPG, JPEG, PNG, PDF
+- Profile images: Auto-approved
+- Documents (Aadhaar, PAN): Require admin approval
+
+### Pagination
+- Default: `offset=0`, `limit=10`
+- Maximum limit typically: 100
+
+### Permissions
+- **User**: Own data only
+- **Admin**: All user data + management
+- **Super Admin**: Full system access
+
+### Leave Total Days
+- Supports half-days with 0.5 increments
+- Examples: 1.0, 1.5, 2.0, 2.5
+- Cannot exceed actual date range
+
+---
+
+## Health Check
+
+**GET** `/health`
+
+**Response:** 200 OK
 ```json
 {
-  "detail": "Email already registered"
+  "status": "healthy",
+  "message": "HRMS Backend is running"
 }
 ```
 
-#### 401 Unauthorized
+---
+
+## API Information
+
+**GET** `/`
+
+**Response:** 200 OK
 ```json
 {
-  "detail": "Could not validate credentials"
+  "message": "HRMS Backend API",
+  "version": "1.0.0",
+  "docs": "/docs",
+  "redoc": "/redoc"
 }
 ```
 
-#### 403 Forbidden
-```json
-{
-  "detail": "Not enough permissions"
-}
-```
+---
 
-#### 404 Not Found
-```json
-{
-  "detail": "User not found"
-}
-```
-
-## Rate Limiting
-
-Currently, there are no rate limits implemented. However, it's recommended to implement rate limiting in production environments to prevent abuse.
-
-## Notes
-
-- All datetime fields are in ISO 8601 format with timezone information
-- JWT tokens expire after 30 minutes by default
-- Password requirements: Minimum 8 characters (recommended)
-- All endpoints require authentication except for user registration
-- Admin endpoints require admin or super_admin role
-- Super admin endpoints require super_admin role only
-- Pagination is available for list endpoints with default limit of 10 items
-- All timestamps are in UTC timezone
+**For the most up-to-date API documentation, visit:**
+- Interactive Docs: http://localhost:8000/docs
+- ReDoc: http://localhost:8000/redoc
