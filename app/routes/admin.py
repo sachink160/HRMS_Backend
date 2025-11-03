@@ -8,10 +8,10 @@ from sqlalchemy.orm import selectinload
 from datetime import datetime, date
 from typing import List, Dict, Any
 from app.database import get_db
-from app.models import User, Leave, Holiday, LeaveStatus, UserRole, DocumentStatus, EmployeeDetails, EmploymentHistory
+from app.models import User, Leave, Holiday, LeaveStatus, UserRole, DocumentStatus, EmploymentHistory
 from app.schema import (
     UserResponse, LeaveResponse, HolidayResponse, TrackerResponse, UserCreate,
-    EmployeeDetailsResponse, EmploymentHistoryResponse, EmployeeSummary, EnhancedTrackerResponse,
+    EmploymentHistoryResponse, EmployeeSummary, EnhancedTrackerResponse,
     EmployeeDetailsCreate, EmployeeDetailsUpdate, EmploymentHistoryCreate, AdminUserUpdate
 )
 from app.auth import get_current_admin_user, get_password_hash, get_current_super_admin_user
@@ -20,44 +20,12 @@ from app.logger import log_info, log_error
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 async def safe_get_employee_details(db: AsyncSession, user_id: int):
-    """Safely get employee details, handling missing columns gracefully."""
+    """With merged model, return the User record itself."""
     try:
-        # Try to get employee details using ORM
-        result = await db.execute(
-            select(EmployeeDetails).where(EmployeeDetails.user_id == user_id)
-        )
+        result = await db.execute(select(User).where(User.id == user_id))
         return result.scalar_one_or_none()
     except Exception as e:
-        log_error(f"Error fetching employee details for user {user_id}: {str(e)}")
-        # If there's a schema mismatch, try to get basic info using raw SQL
-        try:
-            result = await db.execute(text("""
-                SELECT id, user_id, employee_id, department, manager_id, 
-                       employment_type, work_location, work_schedule, 
-                       basic_salary, currency, is_active, created_at, updated_at
-                FROM employee_details 
-                WHERE user_id = :user_id
-            """), {"user_id": user_id})
-            row = result.fetchone()
-            if row:
-                # Create a minimal EmployeeDetails object with available fields
-                details = EmployeeDetails()
-                details.id = row[0]
-                details.user_id = row[1]
-                details.employee_id = row[2]
-                details.department = row[3]
-                details.manager_id = row[4]
-                details.employment_type = row[5]
-                details.work_location = row[6]
-                details.work_schedule = row[7]
-                details.basic_salary = row[8]
-                details.currency = row[9]
-                details.is_active = row[10]
-                details.created_at = row[11]
-                details.updated_at = row[12]
-                return details
-        except Exception as e2:
-            log_error(f"Error fetching employee details with raw SQL for user {user_id}: {str(e2)}")
+        log_error(f"Error fetching user {user_id}: {str(e)}")
         return None
 # Helpers for file upload (duplicate of users router helpers)
 UPLOAD_DIR = Path("uploads")
@@ -1132,15 +1100,7 @@ async def toggle_user_status(
         # Toggle user status
         user.is_active = not user.is_active
 
-        # Sync employee_details.is_active if exists
-        try:
-            ed_result = await db.execute(select(EmployeeDetails).where(EmployeeDetails.user_id == user_id))
-            employee_details = ed_result.scalar_one_or_none()
-            if employee_details is not None:
-                employee_details.is_active = user.is_active
-        except Exception as sync_err:
-            # Log but don't fail the whole request for sync issues
-            log_error(f"EmployeeDetails sync error while toggling user {user_id}: {str(sync_err)}")
+        # No separate employee_details to sync after merge
 
         await db.commit()
         await db.refresh(user)
@@ -1238,14 +1198,7 @@ async def delete_user(
             )
         
         # Delete related records first
-        # Delete employee details
-        from app.models import EmployeeDetails, EmploymentHistory
-        employee_details_result = await db.execute(
-            select(EmployeeDetails).where(EmployeeDetails.user_id == user_id)
-        )
-        employee_details = employee_details_result.scalar_one_or_none()
-        if employee_details:
-            await db.delete(employee_details)
+        from app.models import EmploymentHistory
         
         # Delete employment history
         employment_history_result = await db.execute(
@@ -1264,25 +1217,20 @@ async def delete_user(
         for leave in leaves:
             await db.delete(leave)
         
-        # Update any records that reference this user as manager/reviewer/initiator
-        # Set manager_id to NULL for employee details where this user is the manager
+        # Update any users that reference this user as manager/reviewer/initiator
         await db.execute(
-            update(EmployeeDetails)
-            .where(EmployeeDetails.manager_id == user_id)
+            update(User)
+            .where(User.manager_id == user_id)
             .values(manager_id=None)
         )
-        
-        # Set probation_reviewer_id to NULL for employee details where this user is the reviewer
         await db.execute(
-            update(EmployeeDetails)
-            .where(EmployeeDetails.probation_reviewer_id == user_id)
+            update(User)
+            .where(User.probation_reviewer_id == user_id)
             .values(probation_reviewer_id=None)
         )
-        
-        # Set termination_initiated_by to NULL for employee details where this user initiated termination
         await db.execute(
-            update(EmployeeDetails)
-            .where(EmployeeDetails.termination_initiated_by == user_id)
+            update(User)
+            .where(User.termination_initiated_by == user_id)
             .values(termination_initiated_by=None)
         )
         
@@ -1479,15 +1427,15 @@ async def get_leaves_report(
             detail="Failed to generate leaves report"
         )
 
-# Employee Management Endpoints for Admin
-@router.post("/employees/{user_id}/details", response_model=EmployeeDetailsResponse)
+# Employee Management Endpoints for Admin (merged into User)
+@router.post("/employees/{user_id}/details", response_model=UserResponse)
 async def admin_create_employee_details(
     user_id: int,
     employee_data: EmployeeDetailsCreate,
     current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Create employee details for a user (admin only)."""
+    """Initialize employee-related fields on the user (admin only)."""
     try:
         # Security: Validate user_id is positive integer
         if user_id <= 0:
@@ -1514,16 +1462,6 @@ async def admin_create_employee_details(
                 detail="Cannot create employee details for admin users"
             )
         
-        # Check if employee details already exist
-        existing_details = await db.execute(
-            select(EmployeeDetails).where(EmployeeDetails.user_id == user_id)
-        )
-        if existing_details.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Employee details already exist for this user"
-            )
-        
         # Validate manager_id if provided
         if employee_data.manager_id:
             manager_result = await db.execute(
@@ -1541,25 +1479,18 @@ async def admin_create_employee_details(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="User cannot be their own manager"
                 )
-        
-        # Create employee details with validated data
-        employee_details = EmployeeDetails(user_id=user_id, **employee_data.dict())
-        db.add(employee_details)
+        # Apply fields onto User
+        update_fields = employee_data.dict(exclude_unset=True)
+        update_fields.pop('user_id', None)
+
+        for field, value in update_fields.items():
+            if hasattr(user, field):
+                setattr(user, field, value)
+
         await db.commit()
-        
-        # Load with relationships to avoid async context issues
-        result = await db.execute(
-            select(EmployeeDetails)
-            .options(
-                selectinload(EmployeeDetails.user),
-                selectinload(EmployeeDetails.manager)
-            )
-            .where(EmployeeDetails.user_id == employee_data.user_id)
-        )
-        employee_details = result.scalar_one_or_none()
-        
-        log_info(f"Employee details created for user {user.email} by admin {current_user.email}")
-        return employee_details
+        await db.refresh(user)
+        log_info(f"Employee details initialized on user {user.email} by admin {current_user.email}")
+        return user
         
     except HTTPException:
         raise
@@ -1570,14 +1501,14 @@ async def admin_create_employee_details(
             detail="Failed to create employee details"
         )
 
-@router.put("/employees/{user_id}/details", response_model=EmployeeDetailsResponse)
+@router.put("/employees/{user_id}/details", response_model=UserResponse)
 async def admin_update_employee_details(
     user_id: int,
     employee_data: EmployeeDetailsUpdate,
     current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Update employee details for a user (admin only)."""
+    """Update employee-related fields on the user (admin only)."""
     try:
         # Security: Validate user_id is positive integer
         if user_id <= 0:
@@ -1586,22 +1517,14 @@ async def admin_update_employee_details(
                 detail="Invalid user ID"
             )
         
-        # Get employee details with user information
-        result = await db.execute(
-            select(EmployeeDetails)
-            .options(selectinload(EmployeeDetails.user))
-            .where(EmployeeDetails.user_id == user_id)
-        )
-        employee_details = result.scalar_one_or_none()
-        
-        if not employee_details:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Employee details not found"
-            )
-        
+        # Load user
+        result = await db.execute(select(User).where(User.id == user_id))
+        user_obj = result.scalar_one_or_none()
+        if not user_obj:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
         # Security: Prevent admin from updating details for other admins/super_admins
-        if employee_details.user.role in ['admin', 'super_admin'] and current_user.role != 'super_admin':
+        if user_obj.role in ['admin', 'super_admin'] and current_user.role != 'super_admin':
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Cannot update employee details for admin users"
@@ -1625,27 +1548,16 @@ async def admin_update_employee_details(
                     detail="User cannot be their own manager"
                 )
         
-        # Update fields with validation
+        # Update fields with validation on User
         update_data = employee_data.dict(exclude_unset=True)
         for field, value in update_data.items():
-            if hasattr(employee_details, field) and value is not None:
-                setattr(employee_details, field, value)
-        
+            if hasattr(user_obj, field) and value is not None:
+                setattr(user_obj, field, value)
+
         await db.commit()
-        
-        # Load with relationships to avoid async context issues
-        result = await db.execute(
-            select(EmployeeDetails)
-            .options(
-                selectinload(EmployeeDetails.user),
-                selectinload(EmployeeDetails.manager)
-            )
-            .where(EmployeeDetails.user_id == user_id)
-        )
-        employee_details = result.scalar_one_or_none()
-        
+        await db.refresh(user_obj)
         log_info(f"Employee details updated for user {user_id} by admin {current_user.email}")
-        return employee_details
+        return user_obj
         
     except HTTPException:
         raise
@@ -1656,14 +1568,14 @@ async def admin_update_employee_details(
             detail="Failed to update employee details"
         )
 
-@router.patch("/employees/{user_id}/details", response_model=EmployeeDetailsResponse)
+@router.patch("/employees/{user_id}/details", response_model=UserResponse)
 async def admin_patch_employee_details(
     user_id: int,
     employee_data: EmployeeDetailsUpdate,
     current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Partially update employee details for a user (admin only)."""
+    """Partially update employee-related fields on the user (admin only)."""
     try:
         # Security: Validate user_id is positive integer
         if user_id <= 0:
@@ -1672,22 +1584,14 @@ async def admin_patch_employee_details(
                 detail="Invalid user ID"
             )
         
-        # Get employee details with user information
-        result = await db.execute(
-            select(EmployeeDetails)
-            .options(selectinload(EmployeeDetails.user))
-            .where(EmployeeDetails.user_id == user_id)
-        )
-        employee_details = result.scalar_one_or_none()
-        
-        if not employee_details:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Employee details not found"
-            )
-        
+        # Load user
+        result = await db.execute(select(User).where(User.id == user_id))
+        user_obj = result.scalar_one_or_none()
+        if not user_obj:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
         # Security: Prevent admin from updating details for other admins/super_admins
-        if employee_details.user.role in ['admin', 'super_admin'] and current_user.role != 'super_admin':
+        if user_obj.role in ['admin', 'super_admin'] and current_user.role != 'super_admin':
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Cannot update employee details for admin users"
@@ -1714,24 +1618,13 @@ async def admin_patch_employee_details(
         # Update only provided fields (PATCH behavior)
         update_data = employee_data.dict(exclude_unset=True)
         for field, value in update_data.items():
-            if hasattr(employee_details, field) and value is not None:
-                setattr(employee_details, field, value)
-        
+            if hasattr(user_obj, field) and value is not None:
+                setattr(user_obj, field, value)
+
         await db.commit()
-        
-        # Load with relationships to avoid async context issues
-        result = await db.execute(
-            select(EmployeeDetails)
-            .options(
-                selectinload(EmployeeDetails.user),
-                selectinload(EmployeeDetails.manager)
-            )
-            .where(EmployeeDetails.user_id == user_id)
-        )
-        employee_details = result.scalar_one_or_none()
-        
+        await db.refresh(user_obj)
         log_info(f"Employee details patched for user {user_id} by admin {current_user.email}")
-        return employee_details
+        return user_obj
         
     except HTTPException:
         raise
@@ -1861,11 +1754,11 @@ async def admin_get_all_employees(
         
         employee_summaries = []
         for user in users:
-            # Get employee details for this user safely
-            employee_details = await safe_get_employee_details(db, user.id)
-            
-            # Skip users without employee details if filtering by department
-            if department and (not employee_details or employee_details.department != department):
+            # With merged model, details are on the user
+            employee_details = user
+
+            # Skip by department if filtering
+            if department and (not user.department or user.department != department):
                 continue
             # Get current position
             current_position_result = await db.execute(
@@ -1887,7 +1780,7 @@ async def admin_get_all_employees(
             
             employee_summaries.append(EmployeeSummary(
                 user=user,
-                employee_details=employee_details,
+                employee_details=user,
                 current_position=current_position,
                 recent_tracking=recent_tracking,
                 total_work_days=total_work_days,
@@ -1920,16 +1813,8 @@ async def admin_get_employee_summary(
                 detail="User not found"
             )
         
-        # Get employee details
-        details_result = await db.execute(
-            select(EmployeeDetails)
-            .options(
-                selectinload(EmployeeDetails.user),
-                selectinload(EmployeeDetails.manager)
-            )
-            .where(EmployeeDetails.user_id == user_id)
-        )
-        employee_details = details_result.scalar_one_or_none()
+        # With merged model, details are the user object
+        employee_details = user
         
         # Get current position
         current_position_result = await db.execute(
@@ -1979,10 +1864,10 @@ async def admin_get_departments(
     """Get all departments with employee counts (admin only)."""
     try:
         result = await db.execute(
-            select(EmployeeDetails.department, func.count(EmployeeDetails.id))
-            .where(EmployeeDetails.department.isnot(None))
-            .group_by(EmployeeDetails.department)
-            .order_by(EmployeeDetails.department)
+            select(User.department, func.count(User.id))
+            .where(User.department.isnot(None))
+            .group_by(User.department)
+            .order_by(User.department)
         )
         departments = result.fetchall()
         
@@ -2023,16 +1908,14 @@ async def get_enhanced_dashboard_stats(
         pending_leaves = pending_leaves.scalar() or 0
         
         # Employee-specific stats
-        total_employees_with_details = await db.execute(
-            select(func.count(EmployeeDetails.id))
-        )
+        total_employees_with_details = await db.execute(select(func.count(User.id)))
         total_employees_with_details = total_employees_with_details.scalar() or 0
         
         # Department stats
         department_stats = await db.execute(
-            select(EmployeeDetails.department, func.count(EmployeeDetails.id))
-            .where(EmployeeDetails.department.isnot(None))
-            .group_by(EmployeeDetails.department)
+            select(User.department, func.count(User.id))
+            .where(User.department.isnot(None))
+            .group_by(User.department)
         )
         departments = department_stats.fetchall()
         

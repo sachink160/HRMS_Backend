@@ -5,11 +5,11 @@ from sqlalchemy.orm import selectinload
 from datetime import datetime, date, timedelta
 from typing import List, Optional
 from app.database import get_db
-from app.models import User, EmployeeDetails, EmploymentHistory
+from app.models import User, EmploymentHistory
 from app.schema import (
-    EmployeeDetailsCreate, EmployeeDetailsUpdate, EmployeeDetailsResponse,
+    EmployeeDetailsCreate, EmployeeDetailsUpdate,
     EmploymentHistoryCreate, EmploymentHistoryUpdate, EmploymentHistoryResponse,
-    EmployeeSummary, EnhancedTrackerResponse, PaginationParams,
+    EmployeeSummary, EnhancedTrackerResponse, PaginationParams, UserResponse,
     ProbationReviewCreate, ProbationReviewUpdate, ProbationExtensionCreate,
     TerminationCreate, TerminationUpdate
 )
@@ -20,48 +20,16 @@ import json
 router = APIRouter(prefix="/employees", tags=["employees"])
 
 async def safe_get_employee_details(db: AsyncSession, user_id: int):
-    """Safely get employee details, handling missing columns gracefully."""
+    """With merged model, return the User record itself."""
     try:
-        # Try to get employee details using ORM
-        result = await db.execute(
-            select(EmployeeDetails).where(EmployeeDetails.user_id == user_id)
-        )
+        result = await db.execute(select(User).where(User.id == user_id))
         return result.scalar_one_or_none()
     except Exception as e:
-        log_error(f"Error fetching employee details for user {user_id}: {str(e)}")
-        # If there's a schema mismatch, try to get basic info using raw SQL
-        try:
-            result = await db.execute(text("""
-                SELECT id, user_id, employee_id, department, manager_id, 
-                       employment_type, work_location, work_schedule, 
-                       basic_salary, currency, is_active, created_at, updated_at
-                FROM employee_details 
-                WHERE user_id = :user_id
-            """), {"user_id": user_id})
-            row = result.fetchone()
-            if row:
-                # Create a minimal EmployeeDetails object with available fields
-                details = EmployeeDetails()
-                details.id = row[0]
-                details.user_id = row[1]
-                details.employee_id = row[2]
-                details.department = row[3]
-                details.manager_id = row[4]
-                details.employment_type = row[5]
-                details.work_location = row[6]
-                details.work_schedule = row[7]
-                details.basic_salary = row[8]
-                details.currency = row[9]
-                details.is_active = row[10]
-                details.created_at = row[11]
-                details.updated_at = row[12]
-                return details
-        except Exception as e2:
-            log_error(f"Error fetching employee details with raw SQL for user {user_id}: {str(e2)}")
+        log_error(f"Error fetching user {user_id}: {str(e)}")
         return None
 
 # Employee Details Routes
-@router.post("/details", response_model=EmployeeDetailsResponse)
+@router.post("/details", response_model=UserResponse)
 async def create_employee_details(
     employee_data: EmployeeDetailsCreate,
     current_user: User = Depends(get_current_admin_user),
@@ -80,34 +48,17 @@ async def create_employee_details(
                 detail="User not found"
             )
         
-        # Check if employee details already exist
-        existing_details = await db.execute(
-            select(EmployeeDetails).where(EmployeeDetails.user_id == employee_data.user_id)
-        )
-        if existing_details.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Employee details already exist for this user"
-            )
-        
-        # Create employee details
-        employee_details = EmployeeDetails(**employee_data.model_dump())
-        db.add(employee_details)
+        # Apply fields to User
+        update_fields = employee_data.model_dump(exclude_unset=True)
+        user_fields = {k: v for k, v in update_fields.items() if k != 'user_id'}
+        for field, value in user_fields.items():
+            if hasattr(user, field):
+                setattr(user, field, value)
+
         await db.commit()
-        
-        # Load with relationships to avoid async context issues
-        result = await db.execute(
-            select(EmployeeDetails)
-            .options(
-                selectinload(EmployeeDetails.user),
-                selectinload(EmployeeDetails.manager)
-            )
-            .where(EmployeeDetails.user_id == employee_data.user_id)
-        )
-        employee_details = result.scalar_one_or_none()
-        
-        log_info(f"Employee details created for user {user.email}")
-        return employee_details
+        await db.refresh(user)
+        log_info(f"Employee details initialized on user {user.email}")
+        return user
         
     except HTTPException:
         raise
@@ -118,7 +69,7 @@ async def create_employee_details(
             detail="Failed to create employee details"
         )
 
-@router.get("/details/{user_id}", response_model=EmployeeDetailsResponse)
+@router.get("/details/{user_id}", response_model=UserResponse)
 async def get_employee_details(
     user_id: int,
     current_user: User = Depends(get_current_user),
@@ -133,23 +84,11 @@ async def get_employee_details(
                 detail="Not authorized to view this employee's details"
             )
         
-        result = await db.execute(
-            select(EmployeeDetails)
-            .options(
-                selectinload(EmployeeDetails.user),
-                selectinload(EmployeeDetails.manager)
-            )
-            .where(EmployeeDetails.user_id == user_id)
-        )
-        employee_details = result.scalar_one_or_none()
-        
-        if not employee_details:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Employee details not found"
-            )
-        
-        return employee_details
+        result = await db.execute(select(User).where(User.id == user_id))
+        target = result.scalar_one_or_none()
+        if not target:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        return target
         
     except HTTPException:
         raise
@@ -160,7 +99,7 @@ async def get_employee_details(
             detail="Failed to fetch employee details"
         )
 
-@router.put("/details/{user_id}", response_model=EmployeeDetailsResponse)
+@router.put("/details/{user_id}", response_model=UserResponse)
 async def update_employee_details(
     user_id: int,
     employee_data: EmployeeDetailsUpdate,
@@ -169,40 +108,21 @@ async def update_employee_details(
 ):
     """Update employee details (admin only)."""
     try:
-        result = await db.execute(
-            select(EmployeeDetails).where(EmployeeDetails.user_id == user_id)
-        )
-        employee_details = result.scalar_one_or_none()
-        
-        if not employee_details:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Employee details not found"
-            )
-        
+        result = await db.execute(select(User).where(User.id == user_id))
+        target = result.scalar_one_or_none()
+        if not target:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
         # Update fields
         update_data = employee_data.model_dump(exclude_unset=True)
         for field, value in update_data.items():
-            setattr(employee_details, field, value)
-        
+            if hasattr(target, field):
+                setattr(target, field, value)
+
         await db.commit()
-        
-        # Refresh with relationships loaded
-        await db.refresh(employee_details)
-        
-        # Load relationships explicitly to avoid async context issues
-        result = await db.execute(
-            select(EmployeeDetails)
-            .options(
-                selectinload(EmployeeDetails.user),
-                selectinload(EmployeeDetails.manager)
-            )
-            .where(EmployeeDetails.user_id == user_id)
-        )
-        employee_details = result.scalar_one_or_none()
-        
+        await db.refresh(target)
         log_info(f"Employee details updated for user {user_id}")
-        return employee_details
+        return target
         
     except HTTPException:
         raise
@@ -213,7 +133,7 @@ async def update_employee_details(
             detail="Failed to update employee details"
         )
 
-@router.patch("/details/{user_id}", response_model=EmployeeDetailsResponse)
+@router.patch("/details/{user_id}", response_model=UserResponse)
 async def patch_employee_details(
     user_id: int,
     employee_data: EmployeeDetailsUpdate,
@@ -222,38 +142,21 @@ async def patch_employee_details(
 ):
     """Partially update employee details (admin only)."""
     try:
-        result = await db.execute(
-            select(EmployeeDetails).where(EmployeeDetails.user_id == user_id)
-        )
-        employee_details = result.scalar_one_or_none()
-        
-        if not employee_details:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Employee details not found"
-            )
-        
+        result = await db.execute(select(User).where(User.id == user_id))
+        target = result.scalar_one_or_none()
+        if not target:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
         # Update only provided fields (PATCH behavior)
         update_data = employee_data.model_dump(exclude_unset=True)
         for field, value in update_data.items():
-            if hasattr(employee_details, field) and value is not None:
-                setattr(employee_details, field, value)
-        
+            if hasattr(target, field) and value is not None:
+                setattr(target, field, value)
+
         await db.commit()
-        
-        # Load relationships explicitly to avoid async context issues
-        result = await db.execute(
-            select(EmployeeDetails)
-            .options(
-                selectinload(EmployeeDetails.user),
-                selectinload(EmployeeDetails.manager)
-            )
-            .where(EmployeeDetails.user_id == user_id)
-        )
-        employee_details = result.scalar_one_or_none()
-        
+        await db.refresh(target)
         log_info(f"Employee details patched for user {user_id}")
-        return employee_details
+        return target
         
     except HTTPException:
         raise
@@ -520,8 +423,8 @@ async def get_all_employees_summary(
         
         employee_summaries = []
         for user in users:
-            # Get employee details for this user safely
-            employee_details = await safe_get_employee_details(db, user.id)
+            # With merged model, details are on the user
+            employee_details = user
             
             # Get current position
             current_position_result = await db.execute(
@@ -542,7 +445,7 @@ async def get_all_employees_summary(
             
             employee_summaries.append(EmployeeSummary(
                 user=user,
-                employee_details=employee_details,
+                employee_details=user,
                 current_position=current_position,
                 recent_tracking=recent_tracking,
                 total_work_days=total_work_days,
@@ -570,16 +473,14 @@ async def get_employees_by_department(
         # Get users with employee details in specific department
         result = await db.execute(
             select(User)
-            .join(EmployeeDetails)
-            .where(EmployeeDetails.department == department)
+            .where(User.department == department)
             .order_by(User.name)
         )
         users = result.scalars().all()
         
         employee_summaries = []
         for user in users:
-            # Get employee details for this user safely
-            employee_details = await safe_get_employee_details(db, user.id)
+            employee_details = user
             
             # Get current position
             current_position_result = await db.execute(
@@ -595,7 +496,7 @@ async def get_employees_by_department(
             
             employee_summaries.append(EmployeeSummary(
                 user=user,
-                employee_details=employee_details,
+                employee_details=user,
                 current_position=current_position,
                 recent_tracking=[],
                 total_work_days=0,
@@ -612,7 +513,7 @@ async def get_employees_by_department(
         )
 
 # Probation Management Routes
-@router.post("/{user_id}/probation/review", response_model=EmployeeDetailsResponse)
+@router.post("/{user_id}/probation/review", response_model=UserResponse)
 async def review_probation(
     user_id: int,
     review_data: ProbationReviewCreate,
@@ -621,44 +522,25 @@ async def review_probation(
 ):
     """Review employee probation (admin only)."""
     try:
-        # Get employee details
-        result = await db.execute(
-            select(EmployeeDetails).where(EmployeeDetails.user_id == user_id)
-        )
-        employee_details = result.scalar_one_or_none()
-        
-        if not employee_details:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Employee details not found"
-            )
-        
+        # Load user
+        result = await db.execute(select(User).where(User.id == user_id))
+        target = result.scalar_one_or_none()
+        if not target:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
         # Update probation review data
-        employee_details.probation_status = review_data.probation_status
-        employee_details.probation_review_date = review_data.probation_review_date
-        employee_details.probation_review_notes = review_data.probation_review_notes
-        employee_details.probation_reviewer_id = review_data.probation_reviewer_id
-        
-        # If probation is passed, set end date
+        target.probation_status = review_data.probation_status
+        target.probation_review_date = review_data.probation_review_date
+        target.probation_review_notes = review_data.probation_review_notes
+        target.probation_reviewer_id = review_data.probation_reviewer_id
+
         if review_data.probation_status == "passed":
-            employee_details.probation_end_date = review_data.probation_review_date
-        
+            target.probation_end_date = review_data.probation_review_date
+
         await db.commit()
-        
-        # Load with relationships
-        result = await db.execute(
-            select(EmployeeDetails)
-            .options(
-                selectinload(EmployeeDetails.user),
-                selectinload(EmployeeDetails.manager),
-                selectinload(EmployeeDetails.probation_reviewer)
-            )
-            .where(EmployeeDetails.user_id == user_id)
-        )
-        employee_details = result.scalar_one_or_none()
-        
+        await db.refresh(target)
         log_info(f"Probation reviewed for user {user_id} by admin {current_user.email}")
-        return employee_details
+        return target
         
     except HTTPException:
         raise
@@ -669,7 +551,7 @@ async def review_probation(
             detail="Failed to review probation"
         )
 
-@router.patch("/{user_id}/probation", response_model=EmployeeDetailsResponse)
+@router.patch("/{user_id}/probation", response_model=UserResponse)
 async def patch_probation_details(
     user_id: int,
     probation_data: ProbationReviewUpdate,
@@ -678,46 +560,26 @@ async def patch_probation_details(
 ):
     """Partially update probation details (admin only)."""
     try:
-        # Get employee details
-        result = await db.execute(
-            select(EmployeeDetails).where(EmployeeDetails.user_id == user_id)
-        )
-        employee_details = result.scalar_one_or_none()
-        
-        if not employee_details:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Employee details not found"
-            )
-        
-        # Update only provided probation fields (PATCH behavior)
+        # Load user
+        result = await db.execute(select(User).where(User.id == user_id))
+        target = result.scalar_one_or_none()
+        if not target:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
         update_data = probation_data.model_dump(exclude_unset=True)
         for field, value in update_data.items():
-            if hasattr(employee_details, field) and value is not None:
-                setattr(employee_details, field, value)
-        
-        # If probation status is passed and no end date set, set it to review date
+            if hasattr(target, field) and value is not None:
+                setattr(target, field, value)
+
         if (probation_data.probation_status == "passed" and 
-            not employee_details.probation_end_date and 
+            not target.probation_end_date and 
             probation_data.probation_review_date):
-            employee_details.probation_end_date = probation_data.probation_review_date
-        
+            target.probation_end_date = probation_data.probation_review_date
+
         await db.commit()
-        
-        # Load with relationships
-        result = await db.execute(
-            select(EmployeeDetails)
-            .options(
-                selectinload(EmployeeDetails.user),
-                selectinload(EmployeeDetails.manager),
-                selectinload(EmployeeDetails.probation_reviewer)
-            )
-            .where(EmployeeDetails.user_id == user_id)
-        )
-        employee_details = result.scalar_one_or_none()
-        
+        await db.refresh(target)
         log_info(f"Probation details patched for user {user_id} by admin {current_user.email}")
-        return employee_details
+        return target
         
     except HTTPException:
         raise
@@ -728,7 +590,7 @@ async def patch_probation_details(
             detail="Failed to patch probation details"
         )
 
-@router.post("/{user_id}/probation/extend", response_model=EmployeeDetailsResponse)
+@router.post("/{user_id}/probation/extend", response_model=UserResponse)
 async def extend_probation(
     user_id: int,
     extension_data: ProbationExtensionCreate,
@@ -737,49 +599,31 @@ async def extend_probation(
 ):
     """Extend employee probation period (admin only)."""
     try:
-        # Get employee details
-        result = await db.execute(
-            select(EmployeeDetails).where(EmployeeDetails.user_id == user_id)
-        )
-        employee_details = result.scalar_one_or_none()
-        
-        if not employee_details:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Employee details not found"
-            )
-        
+        # Load user
+        result = await db.execute(select(User).where(User.id == user_id))
+        target = result.scalar_one_or_none()
+        if not target:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
         # Calculate new probation end date
-        if employee_details.probation_end_date:
+        if target.probation_end_date:
             from datetime import timedelta
-            new_end_date = employee_details.probation_end_date + timedelta(days=extension_data.extension_months * 30)
+            new_end_date = target.probation_end_date + timedelta(days=extension_data.extension_months * 30)
         else:
             new_end_date = date.today() + timedelta(days=extension_data.extension_months * 30)
-        
+
         # Update probation data
-        employee_details.probation_status = "extended"
-        employee_details.probation_end_date = new_end_date
-        employee_details.probation_period_months += extension_data.extension_months
-        employee_details.probation_review_notes = f"Extended by {extension_data.extension_months} months. Reason: {extension_data.extension_reason}"
-        employee_details.probation_reviewer_id = extension_data.probation_reviewer_id
-        employee_details.probation_review_date = date.today()
-        
+        target.probation_status = "extended"
+        target.probation_end_date = new_end_date
+        target.probation_period_months = (target.probation_period_months or 0) + extension_data.extension_months
+        target.probation_review_notes = f"Extended by {extension_data.extension_months} months. Reason: {extension_data.extension_reason}"
+        target.probation_reviewer_id = extension_data.probation_reviewer_id
+        target.probation_review_date = date.today()
+
         await db.commit()
-        
-        # Load with relationships
-        result = await db.execute(
-            select(EmployeeDetails)
-            .options(
-                selectinload(EmployeeDetails.user),
-                selectinload(EmployeeDetails.manager),
-                selectinload(EmployeeDetails.probation_reviewer)
-            )
-            .where(EmployeeDetails.user_id == user_id)
-        )
-        employee_details = result.scalar_one_or_none()
-        
+        await db.refresh(target)
         log_info(f"Probation extended for user {user_id} by admin {current_user.email}")
-        return employee_details
+        return target
         
     except HTTPException:
         raise
@@ -790,7 +634,7 @@ async def extend_probation(
             detail="Failed to extend probation"
         )
 
-@router.get("/probation/pending", response_model=List[EmployeeDetailsResponse])
+@router.get("/probation/pending", response_model=List[UserResponse])
 async def get_pending_probation_reviews(
     current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
@@ -798,21 +642,16 @@ async def get_pending_probation_reviews(
     """Get employees with pending probation reviews (admin only)."""
     try:
         result = await db.execute(
-            select(EmployeeDetails)
-            .options(
-                selectinload(EmployeeDetails.user),
-                selectinload(EmployeeDetails.manager)
-            )
+            select(User)
             .where(
                 and_(
-                    EmployeeDetails.probation_status == "pending",
-                    EmployeeDetails.probation_end_date <= date.today()
+                    User.probation_status == "pending",
+                    User.probation_end_date <= date.today()
                 )
             )
         )
-        pending_reviews = result.scalars().all()
-        
-        return pending_reviews
+        users = result.scalars().all()
+        return users
         
     except Exception as e:
         log_error(f"Get pending probation reviews error: {str(e)}")
@@ -822,7 +661,7 @@ async def get_pending_probation_reviews(
         )
 
 # Termination Management Routes
-@router.post("/{user_id}/terminate", response_model=EmployeeDetailsResponse)
+@router.post("/{user_id}/terminate", response_model=UserResponse)
 async def terminate_employee(
     user_id: int,
     termination_data: TerminationCreate,
@@ -831,50 +670,26 @@ async def terminate_employee(
 ):
     """Terminate employee (admin only)."""
     try:
-        # Get employee details
-        result = await db.execute(
-            select(EmployeeDetails).where(EmployeeDetails.user_id == user_id)
-        )
-        employee_details = result.scalar_one_or_none()
-        
-        if not employee_details:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Employee details not found"
-            )
-        
+        # Load user
+        result = await db.execute(select(User).where(User.id == user_id))
+        target = result.scalar_one_or_none()
+        if not target:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
         # Update termination data
-        employee_details.termination_date = termination_data.termination_date
-        employee_details.termination_reason = termination_data.termination_reason
-        employee_details.termination_type = termination_data.termination_type
-        employee_details.termination_notice_period_days = termination_data.termination_notice_period_days
-        employee_details.last_working_date = termination_data.last_working_date
-        employee_details.termination_notes = termination_data.termination_notes
-        employee_details.termination_initiated_by = termination_data.termination_initiated_by
-        employee_details.is_active = False
-        
-        # Deactivate user account
-        user_result = await db.execute(select(User).where(User.id == user_id))
-        user = user_result.scalar_one_or_none()
-        if user:
-            user.is_active = False
-        
+        target.termination_date = termination_data.termination_date
+        target.termination_reason = termination_data.termination_reason
+        target.termination_type = termination_data.termination_type
+        target.termination_notice_period_days = termination_data.termination_notice_period_days
+        target.last_working_date = termination_data.last_working_date
+        target.termination_notes = termination_data.termination_notes
+        target.termination_initiated_by = termination_data.termination_initiated_by
+        target.is_active = False
+
         await db.commit()
-        
-        # Load with relationships
-        result = await db.execute(
-            select(EmployeeDetails)
-            .options(
-                selectinload(EmployeeDetails.user),
-                selectinload(EmployeeDetails.manager),
-                selectinload(EmployeeDetails.termination_initiator)
-            )
-            .where(EmployeeDetails.user_id == user_id)
-        )
-        employee_details = result.scalar_one_or_none()
-        
+        await db.refresh(target)
         log_info(f"Employee {user_id} terminated by admin {current_user.email}")
-        return employee_details
+        return target
         
     except HTTPException:
         raise
@@ -885,7 +700,7 @@ async def terminate_employee(
             detail="Failed to terminate employee"
         )
 
-@router.put("/{user_id}/termination", response_model=EmployeeDetailsResponse)
+@router.put("/{user_id}/termination", response_model=UserResponse)
 async def update_termination_details(
     user_id: int,
     termination_data: TerminationUpdate,
@@ -894,39 +709,21 @@ async def update_termination_details(
 ):
     """Update termination details (admin only)."""
     try:
-        # Get employee details
-        result = await db.execute(
-            select(EmployeeDetails).where(EmployeeDetails.user_id == user_id)
-        )
-        employee_details = result.scalar_one_or_none()
-        
-        if not employee_details:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Employee details not found"
-            )
-        
-        # Update termination data
+        # Load user
+        result = await db.execute(select(User).where(User.id == user_id))
+        target = result.scalar_one_or_none()
+        if not target:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
         update_data = termination_data.model_dump(exclude_unset=True)
         for field, value in update_data.items():
-            setattr(employee_details, field, value)
-        
+            if hasattr(target, field):
+                setattr(target, field, value)
+
         await db.commit()
-        
-        # Load with relationships
-        result = await db.execute(
-            select(EmployeeDetails)
-            .options(
-                selectinload(EmployeeDetails.user),
-                selectinload(EmployeeDetails.manager),
-                selectinload(EmployeeDetails.termination_initiator)
-            )
-            .where(EmployeeDetails.user_id == user_id)
-        )
-        employee_details = result.scalar_one_or_none()
-        
+        await db.refresh(target)
         log_info(f"Termination details updated for user {user_id} by admin {current_user.email}")
-        return employee_details
+        return target
         
     except HTTPException:
         raise
@@ -937,7 +734,7 @@ async def update_termination_details(
             detail="Failed to update termination details"
         )
 
-@router.patch("/{user_id}/termination", response_model=EmployeeDetailsResponse)
+@router.patch("/{user_id}/termination", response_model=UserResponse)
 async def patch_termination_details(
     user_id: int,
     termination_data: TerminationUpdate,
@@ -946,40 +743,21 @@ async def patch_termination_details(
 ):
     """Partially update termination details (admin only)."""
     try:
-        # Get employee details
-        result = await db.execute(
-            select(EmployeeDetails).where(EmployeeDetails.user_id == user_id)
-        )
-        employee_details = result.scalar_one_or_none()
-        
-        if not employee_details:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Employee details not found"
-            )
-        
-        # Update only provided termination fields (PATCH behavior)
+        # Load user
+        result = await db.execute(select(User).where(User.id == user_id))
+        target = result.scalar_one_or_none()
+        if not target:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
         update_data = termination_data.model_dump(exclude_unset=True)
         for field, value in update_data.items():
-            if hasattr(employee_details, field) and value is not None:
-                setattr(employee_details, field, value)
-        
+            if hasattr(target, field) and value is not None:
+                setattr(target, field, value)
+
         await db.commit()
-        
-        # Load with relationships
-        result = await db.execute(
-            select(EmployeeDetails)
-            .options(
-                selectinload(EmployeeDetails.user),
-                selectinload(EmployeeDetails.manager),
-                selectinload(EmployeeDetails.termination_initiator)
-            )
-            .where(EmployeeDetails.user_id == user_id)
-        )
-        employee_details = result.scalar_one_or_none()
-        
+        await db.refresh(target)
         log_info(f"Termination details patched for user {user_id} by admin {current_user.email}")
-        return employee_details
+        return target
         
     except HTTPException:
         raise
@@ -990,7 +768,7 @@ async def patch_termination_details(
             detail="Failed to patch termination details"
         )
 
-@router.get("/terminated", response_model=List[EmployeeDetailsResponse])
+@router.get("/terminated", response_model=List[UserResponse])
 async def get_terminated_employees(
     offset: int = 0,
     limit: int = 10,
@@ -1000,20 +778,14 @@ async def get_terminated_employees(
     """Get terminated employees (admin only)."""
     try:
         result = await db.execute(
-            select(EmployeeDetails)
-            .options(
-                selectinload(EmployeeDetails.user),
-                selectinload(EmployeeDetails.manager),
-                selectinload(EmployeeDetails.termination_initiator)
-            )
-            .where(EmployeeDetails.termination_date.isnot(None))
+            select(User)
+            .where(User.termination_date.isnot(None))
             .offset(offset)
             .limit(limit)
-            .order_by(EmployeeDetails.termination_date.desc())
+            .order_by(User.termination_date.desc())
         )
-        terminated_employees = result.scalars().all()
-        
-        return terminated_employees
+        users = result.scalars().all()
+        return users
         
     except Exception as e:
         log_error(f"Get terminated employees error: {str(e)}")

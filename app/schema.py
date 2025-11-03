@@ -27,6 +27,38 @@ class UserUpdate(BaseModel):
     aadhaar_back: Optional[str] = None
     pan_image: Optional[str] = None
     # When user updates a file, status will be set to pending in backend
+    @field_validator('joining_date')
+    @classmethod
+    def validate_joining_date(cls, v):
+        if v is None:
+            return v
+        if isinstance(v, str):
+            # Try common date formats
+            date_str = v.strip()
+            for fmt in (
+                '%Y-%m-%d',    # 2025-10-31
+                '%d/%m/%Y',    # 31/10/2025
+                '%m/%d/%Y',    # 10/31/2025
+                '%d-%m-%Y',    # 31-10-2025
+                '%m-%d-%Y',    # 10-31-2025
+                '%Y/%m/%d',    # 2025/10/31
+                '%d.%m.%Y',    # 31.10.2025
+                '%m.%d.%Y',    # 10.31.2025
+                '%Y.%m.%d',    # 2025.10.31
+            ):
+                try:
+                    return datetime.strptime(date_str, fmt).date()
+                except ValueError:
+                    continue
+            # ISO strings like 2025-10-31T00:00:00
+            try:
+                return datetime.fromisoformat(date_str).date()
+            except ValueError:
+                pass
+            raise ValueError(
+                'Invalid joining_date format. Use YYYY-MM-DD or common local formats.'
+            )
+        return v
 
 class AdminUserUpdate(BaseModel):
     name: Optional[str] = None
@@ -41,6 +73,38 @@ class AdminUserUpdate(BaseModel):
     aadhaar_back: Optional[str] = None
     pan_image: Optional[str] = None
     # When admin updates a file, status will be set to pending in backend
+    @field_validator('joining_date')
+    @classmethod
+    def validate_joining_date(cls, v):
+        if v is None:
+            return v
+        if isinstance(v, str):
+            # Try common date formats
+            date_str = v.strip()
+            for fmt in (
+                '%Y-%m-%d',    # 2025-10-31
+                '%d/%m/%Y',    # 31/10/2025
+                '%m/%d/%Y',    # 10/31/2025
+                '%d-%m-%Y',    # 31-10-2025
+                '%m-%d-%Y',    # 10-31-2025
+                '%Y/%m/%d',    # 2025/10/31
+                '%d.%m.%Y',    # 31.10.2025
+                '%m.%d.%Y',    # 10.31.2025
+                '%Y.%m.%d',    # 2025.10.31
+            ):
+                try:
+                    return datetime.strptime(date_str, fmt).date()
+                except ValueError:
+                    continue
+            # ISO strings like 2025-10-31T00:00:00
+            try:
+                return datetime.fromisoformat(date_str).date()
+            except ValueError:
+                pass
+            raise ValueError(
+                'Invalid joining_date format. Use YYYY-MM-DD or common local formats.'
+            )
+        return v
 
 class UserResponse(UserBase):
     id: int
@@ -605,6 +669,8 @@ class EmployeeDetailsBase(BaseModel):
     marital_status: Optional[str] = None
     nationality: Optional[str] = None
     personal_email: Optional[str] = None
+    company_email: Optional[str] = None
+    company_email_password: Optional[str] = None
     emergency_contact_name: Optional[str] = None
     emergency_contact_phone: Optional[str] = None
     emergency_contact_relation: Optional[str] = None
@@ -662,6 +728,8 @@ class EmployeeDetailsUpdate(BaseModel):
     marital_status: Optional[str] = None
     nationality: Optional[str] = None
     personal_email: Optional[str] = None
+    company_email: Optional[str] = None
+    company_email_password: Optional[str] = None
     emergency_contact_name: Optional[str] = None
     emergency_contact_phone: Optional[str] = None
     emergency_contact_relation: Optional[str] = None
@@ -820,7 +888,7 @@ class EnhancedTrackerResponse(TrackerResponse):
 # Employee Summary Schema
 class EmployeeSummary(BaseModel):
     user: UserResponse
-    employee_details: Optional[EmployeeDetailsResponse] = None
+    employee_details: Optional[UserResponse] = None
     current_position: Optional[EmploymentHistoryResponse] = None
     recent_tracking: List[TrackerResponse] = []
     total_work_days: Optional[int] = None

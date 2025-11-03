@@ -5,10 +5,10 @@ from sqlalchemy.orm import selectinload
 from datetime import datetime, timedelta
 from typing import List, Optional
 from app.database import get_db
-from app.models import User, DocumentStatus, EmployeeDetails, EmploymentHistory
+from app.models import User, DocumentStatus, EmploymentHistory
 from app.schema import (
     UserUpdate, UserResponse, FileUploadResponse,
-    EmployeeDetailsResponse, EmploymentHistoryResponse, EmployeeSummary
+    EmploymentHistoryResponse, EmployeeSummary
 )
 from app.auth import get_current_user, get_current_admin_user
 from app.logger import log_info, log_error
@@ -279,41 +279,20 @@ async def upload_pan(
             detail="Failed to upload PAN"
         )
 
-# Employee Management Endpoints for Users
-@router.get("/my-employee-details", response_model=Optional[EmployeeDetailsResponse])
+# Employee Management Endpoints for Users (now merged into User)
+@router.get("/my-employee-details", response_model=Optional[UserResponse])
 async def get_my_employee_details(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get current user's employee details (read-only access)."""
     try:
-        # Security: Ensure user is active
+        # Allow fetching self details even if account is inactive to keep dashboard/profile loads stable
         if not current_user.is_active:
-            log_error(f"Inactive user {current_user.email} attempted to access employee details")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Account is deactivated"
-            )
-        
-        log_info(f"User {current_user.email} (ID: {current_user.id}) accessing employee details")
-        
-        result = await db.execute(
-            select(EmployeeDetails)
-            .options(
-                selectinload(EmployeeDetails.user),
-                selectinload(EmployeeDetails.manager)
-            )
-            .where(EmployeeDetails.user_id == current_user.id)
-        )
-        employee_details = result.scalar_one_or_none()
-        
-        # Only return employee details if they exist and are active
-        if employee_details and not employee_details.is_active:
-            employee_details = None
-        
-        # Log access for audit
-        log_info(f"User {current_user.email} accessed their employee details")
-        return employee_details
+            log_info(f"Inactive user {current_user.email} accessed their employee details (read-only)")
+
+        log_info(f"User {current_user.email} (ID: {current_user.id}) accessing employee details (via merged User)")
+        return current_user
         
     except HTTPException:
         raise
@@ -331,13 +310,7 @@ async def get_my_employment_history(
 ):
     """Get current user's employment history (read-only access)."""
     try:
-        # Security: Ensure user is active
-        if not current_user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Account is deactivated"
-            )
-        
+        # Allow read-only history for inactive users as well
         result = await db.execute(
             select(EmploymentHistory)
             .options(
@@ -369,27 +342,9 @@ async def get_my_employee_summary(
 ):
     """Get current user's comprehensive employee summary (read-only access)."""
     try:
-        # Security: Ensure user is active
-        if not current_user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Account is deactivated"
-            )
-        
-        # Get employee details with security check
-        details_result = await db.execute(
-            select(EmployeeDetails)
-            .options(
-                selectinload(EmployeeDetails.user),
-                selectinload(EmployeeDetails.manager)
-            )
-            .where(and_(
-                EmployeeDetails.user_id == current_user.id,
-                EmployeeDetails.is_active == True
-            ))
-        )
-        employee_details = details_result.scalar_one_or_none()
-        
+        # With merged model, details are on user
+        employee_details = current_user
+
         # Get current position
         current_position_result = await db.execute(
             select(EmploymentHistory)
@@ -440,45 +395,33 @@ async def get_my_department_colleagues(
 ):
     """Get colleagues from the same department."""
     try:
-        # Security: Ensure user is active
-        if not current_user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Account is deactivated"
-            )
         # Get current user's department
-        user_details_result = await db.execute(
-            select(EmployeeDetails).where(EmployeeDetails.user_id == current_user.id)
-        )
-        user_details = user_details_result.scalar_one_or_none()
-        
-        if not user_details or not user_details.department:
+        # Department from merged User
+        if not current_user.department:
             return {"colleagues": [], "department": None}
         
         # Get colleagues from same department
         colleagues_result = await db.execute(
             select(User)
-            .join(EmployeeDetails)
             .where(
                 and_(
-                    EmployeeDetails.department == user_details.department,
+                    User.department == current_user.department,
                     User.id != current_user.id,
                     User.is_active == True
                 )
             )
-            .options(selectinload(User.employee_details))
         )
         colleagues = colleagues_result.scalars().all()
         
         return {
-            "department": user_details.department,
+            "department": current_user.department,
             "colleagues": [
                 {
                     "id": colleague.id,
                     "name": colleague.name,
                     "email": colleague.email,
                     "designation": colleague.designation,
-                    "employee_details": getattr(colleague, 'employee_details', None)
+                    # merged details are on the user itself
                 }
                 for colleague in colleagues
             ]
@@ -498,26 +441,13 @@ async def get_my_manager(
 ):
     """Get current user's manager information."""
     try:
-        # Security: Ensure user is active
-        if not current_user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Account is deactivated"
-            )
-        # Get current user's manager from employee details
-        user_details_result = await db.execute(
-            select(EmployeeDetails)
-            .options(selectinload(EmployeeDetails.manager))
-            .where(EmployeeDetails.user_id == current_user.id)
-        )
-        user_details = user_details_result.scalar_one_or_none()
-        
-        if not user_details or not user_details.manager_id:
+        # With merged model, manager_id is on User
+        if not current_user.manager_id:
             return {"manager": None}
         
         # Get manager details
         manager_result = await db.execute(
-            select(User).where(User.id == user_details.manager_id)
+            select(User).where(User.id == current_user.manager_id)
         )
         manager = manager_result.scalar_one_or_none()
         
