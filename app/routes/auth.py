@@ -4,7 +4,7 @@ from sqlalchemy import select
 from datetime import timedelta
 from app.database import get_db
 from app.models import User
-from app.schema import UserCreate, UserResponse, UserLogin, UserUpdate
+from app.schema import UserCreate, UserResponse, UserLogin, UserUpdate, AdminCreateWithSecret
 from app.models import UserRole
 from app.auth import (
     get_password_hash, 
@@ -16,8 +16,13 @@ from app.auth import (
     ACCESS_TOKEN_EXPIRE_MINUTES
 )
 from app.logger import log_info, log_error
+import os
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
+
+# Secret codes from environment variables
+ADMIN_SECRET_CODE = os.getenv("ADMIN_SECRET_CODE", "New@123")
+SUPER_ADMIN_SECRET_CODE = os.getenv("SUPER_ADMIN_SECRET_CODE", "New@123")
 
 @router.post("/register", response_model=UserResponse)
 async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
@@ -194,4 +199,80 @@ async def register_admin(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Admin registration failed"
+        )
+
+@router.post("/create-admin", response_model=UserResponse)
+async def create_admin_with_secret(
+    admin_data: AdminCreateWithSecret,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Create admin or super admin user with secret code validation.
+    No authentication required, but secret code must match backend configuration.
+    """
+    try:
+        # Validate secret code based on role
+        if admin_data.role == UserRole.SUPER_ADMIN:
+            if admin_data.secret_code != SUPER_ADMIN_SECRET_CODE:
+                log_error(f"Invalid super admin secret code attempt for email: {admin_data.email}")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Invalid secret code for super admin creation"
+                )
+        elif admin_data.role == UserRole.ADMIN:
+            if admin_data.secret_code != ADMIN_SECRET_CODE:
+                log_error(f"Invalid admin secret code attempt for email: {admin_data.email}")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Invalid secret code for admin creation"
+                )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Role must be 'admin' or 'super_admin'"
+            )
+        
+        # Check if user already exists
+        existing_user = await db.execute(select(User).where(User.email == admin_data.email))
+        if existing_user.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+        
+        # Validate password strength
+        if len(admin_data.password) < 8:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password must be at least 8 characters long"
+            )
+        
+        # Create new admin/super admin user
+        hashed_password = get_password_hash(admin_data.password)
+        db_user = User(
+            email=admin_data.email,
+            hashed_password=hashed_password,
+            name=admin_data.name,
+            phone=admin_data.phone,
+            designation=admin_data.designation,
+            joining_date=admin_data.joining_date,
+            role=admin_data.role,
+            is_active=True
+        )
+        
+        db.add(db_user)
+        await db.commit()
+        await db.refresh(db_user)
+        
+        role_name = "super admin" if admin_data.role == UserRole.SUPER_ADMIN else "admin"
+        log_info(f"New {role_name} user created: {admin_data.email} via secret code")
+        return db_user
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Create admin with secret code error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create admin user"
         )

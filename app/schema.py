@@ -138,6 +138,12 @@ class UserLogin(BaseModel):
     email: EmailStr
     password: str
 
+# Admin Creation with Secret Code Schema
+class AdminCreateWithSecret(UserBase):
+    password: str
+    secret_code: str
+    role: UserRole  # "admin" or "super_admin"
+
 # Leave Schemas
 class LeaveBase(BaseModel):
     start_date: Union[str, datetime]  # Accept both string and datetime

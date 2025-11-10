@@ -60,6 +60,9 @@ class User(Base):
     personal_email = Column(String, nullable=True)
     company_email = Column(String, nullable=True, index=True)  # Company email address
     company_email_password = Column(String, nullable=True)  # Company email password (should be encrypted in production)
+    # IT Assets & Credentials
+    hardware_allocation = Column(Text, nullable=True)  # Details of allocated hardware (e.g., laptop, accessories)
+    system_password = Column(String, nullable=True)  # System password (should be encrypted in production)
     emergency_contact_name = Column(String, nullable=True)
     emergency_contact_phone = Column(String, nullable=True)
     emergency_contact_relation = Column(String, nullable=True)
