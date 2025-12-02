@@ -37,27 +37,42 @@ def main():
         cmd = args[0]
         cmd_args = args[1:]
         
+        # Special handling for revision command with autogenerate
+        if cmd == 'revision' and '--autogenerate' in cmd_args:
+            # Remove any --sql flags that might interfere
+            cmd_args = [arg for arg in cmd_args if arg not in ['--sql', '-sql']]
+            # Ensure database URL is set
+            from app.database import DATABASE_URL
+            alembic_cfg.set_main_option('sqlalchemy.url', DATABASE_URL)
+        
         # Run the appropriate command
-        if cmd == 'upgrade':
-            command.upgrade(alembic_cfg, *cmd_args)
-        elif cmd == 'downgrade':
-            command.downgrade(alembic_cfg, *cmd_args)
-        elif cmd == 'revision':
-            command.revision(alembic_cfg, *cmd_args)
-        elif cmd == 'current':
-            command.current(alembic_cfg, *cmd_args)
-        elif cmd == 'history':
-            command.history(alembic_cfg, *cmd_args)
-        elif cmd == 'stamp':
-            command.stamp(alembic_cfg, *cmd_args)
-        elif cmd == 'merge':
-            command.merge(alembic_cfg, *cmd_args)
-        elif cmd == 'heads':
-            command.heads(alembic_cfg, *cmd_args)
-        elif cmd == 'show':
-            command.show(alembic_cfg, *cmd_args)
-        elif cmd == 'check':
-            command.check(alembic_cfg, *cmd_args)
+        try:
+            if cmd == 'upgrade':
+                command.upgrade(alembic_cfg, *cmd_args)
+            elif cmd == 'downgrade':
+                command.downgrade(alembic_cfg, *cmd_args)
+            elif cmd == 'revision':
+                # Filter out --sql flag if --autogenerate is present
+                if '--autogenerate' in cmd_args:
+                    cmd_args = [arg for arg in cmd_args if arg not in ['--sql', '-sql']]
+                command.revision(alembic_cfg, *cmd_args)
+            elif cmd == 'current':
+                command.current(alembic_cfg, *cmd_args)
+            elif cmd == 'history':
+                command.history(alembic_cfg, *cmd_args)
+            elif cmd == 'stamp':
+                command.stamp(alembic_cfg, *cmd_args)
+            elif cmd == 'merge':
+                command.merge(alembic_cfg, *cmd_args)
+            elif cmd == 'heads':
+                command.heads(alembic_cfg, *cmd_args)
+            elif cmd == 'show':
+                command.show(alembic_cfg, *cmd_args)
+            elif cmd == 'check':
+                command.check(alembic_cfg, *cmd_args)
+        except Exception as e:
+            print(f"Error: {e}")
+            sys.exit(1)
     else:
         # Default help
         print(__doc__)

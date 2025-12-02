@@ -341,3 +341,51 @@ class Task(Base):
         Index('idx_task_user_status', 'user_id', 'status'),
         Index('idx_task_user_created', 'user_id', 'created_at'),
     )
+
+class TimeLogStatus(str, enum.Enum):
+    ACTIVE = "active"  # Timer is running
+    ON_BREAK = "on_break"  # Currently on break
+    COMPLETED = "completed"  # Timer stopped for the day
+
+class TimeLog(Base):
+    __tablename__ = "time_logs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    
+    # Date for this time log entry
+    log_date = Column(Date, nullable=False)
+    
+    # Start and end times
+    start_time = Column(DateTime(timezone=True), nullable=False)
+    end_time = Column(DateTime(timezone=True), nullable=True)
+    
+    # Break tracking (stored as JSON string: [{"start": "...", "end": "..."}, ...])
+    breaks = Column(Text, nullable=True)  # JSON array of break objects
+    
+    # Calculated durations (in seconds)
+    total_break_duration = Column(Integer, default=0, nullable=False)  # Total break time in seconds
+    total_work_duration = Column(Integer, nullable=True)  # Total work time in seconds (excluding breaks)
+    
+    # Status
+    status = Column(Enum(TimeLogStatus), default=TimeLogStatus.ACTIVE, nullable=False)
+    
+    # Notes
+    notes = Column(Text, nullable=True)
+    
+    # System Information
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships
+    user = relationship("User", backref="time_logs")
+    
+    # Database indexes for performance optimization
+    __table_args__ = (
+        Index('idx_time_log_user_id', 'user_id'),
+        Index('idx_time_log_date', 'log_date'),
+        Index('idx_time_log_status', 'status'),
+        Index('idx_time_log_user_date', 'user_id', 'log_date'),
+        Index('idx_time_log_created_at', 'created_at'),
+        Index('idx_time_log_user_created', 'user_id', 'created_at'),
+    )

@@ -2,7 +2,7 @@ from pydantic import BaseModel, EmailStr, field_validator
 from typing import Optional, List, Union
 from datetime import datetime, date, timezone
 from decimal import Decimal
-from app.models import UserRole, LeaveStatus, DocumentStatus, TaskStatus
+from app.models import UserRole, LeaveStatus, DocumentStatus, TaskStatus, TimeLogStatus
 
 # User Schemas
 class UserBase(BaseModel):
@@ -1005,3 +1005,79 @@ class TaskSummary(BaseModel):
     completed_tasks: int
     cancelled_tasks: int
     overdue_tasks: int
+
+# Time Tracking Schemas
+class BreakInfo(BaseModel):
+    start: datetime
+    end: Optional[datetime] = None
+    duration: Optional[int] = None  # Duration in seconds
+
+class TimeLogBase(BaseModel):
+    notes: Optional[str] = None
+
+class TimeLogCreate(TimeLogBase):
+    pass
+
+class TimeLogResponse(TimeLogBase):
+    id: int
+    user_id: int
+    log_date: date
+    start_time: datetime
+    end_time: Optional[datetime] = None
+    breaks: Optional[List[BreakInfo]] = None
+    total_break_duration: int  # Total break time in seconds
+    total_work_duration: Optional[int] = None  # Total work time in seconds
+    status: TimeLogStatus
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    user: Optional[UserResponse] = None
+    
+    class Config:
+        from_attributes = True
+
+class TimeLogSummary(BaseModel):
+    """Summary for a single day"""
+    log_date: date
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    total_work_hours: Optional[float] = None  # Total work hours (excluding breaks)
+    total_break_hours: Optional[float] = None  # Total break hours
+    total_hours: Optional[float] = None  # Total hours (start to end, including breaks)
+    breaks_count: int = 0
+    status: TimeLogStatus
+    time_log_id: Optional[int] = None
+
+class TimeLogStatistics(BaseModel):
+    """Statistics for time tracking"""
+    total_work_hours: float  # Total work hours in period
+    total_break_hours: float  # Total break hours in period
+    total_days: int  # Number of days tracked
+    average_hours_per_day: Optional[float] = None
+    average_break_hours_per_day: Optional[float] = None
+    days_with_logs: int  # Days that have time logs
+    current_status: Optional[TimeLogStatus] = None  # Current timer status
+    today_work_hours: Optional[float] = None  # Today's work hours
+    today_break_hours: Optional[float] = None  # Today's break hours
+
+class EmployeeTimeLogResponse(BaseModel):
+    """Time log with employee info for admin view"""
+    id: int
+    user_id: int
+    user_name: str
+    user_email: str
+    employee_id: Optional[str] = None
+    log_date: date
+    start_time: datetime
+    end_time: Optional[datetime] = None
+    breaks: Optional[List[BreakInfo]] = None
+    total_break_duration: int
+    total_work_duration: Optional[int] = None
+    total_work_hours: Optional[float] = None
+    total_break_hours: Optional[float] = None
+    status: TimeLogStatus
+    notes: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    
+    class Config:
+        from_attributes = True
