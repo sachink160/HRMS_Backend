@@ -348,27 +348,101 @@ class LeaveUpdate(BaseModel):
     @field_validator('start_date')
     @classmethod
     def validate_start_date(cls, v):
-        if v is not None and isinstance(v, str):
-            try:
-                return datetime.fromisoformat(v)
-            except ValueError:
+        if v is not None:
+            if isinstance(v, str):
                 try:
-                    return datetime.fromisoformat(v + 'T00:00:00')
+                    # Try parsing as ISO format datetime string
+                    parsed = datetime.fromisoformat(v.replace('Z', '+00:00'))
+                    # Ensure timezone-aware
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=timezone.utc)
+                    return parsed
                 except ValueError:
-                    raise ValueError("Invalid start date format")
+                    try:
+                        # Try with time component
+                        parsed = datetime.fromisoformat(v + 'T00:00:00')
+                        if parsed.tzinfo is None:
+                            parsed = parsed.replace(tzinfo=timezone.utc)
+                        return parsed
+                    except ValueError:
+                        # Try parsing with different formats
+                        date_str = v.strip()
+                        date_formats = [
+                            '%Y-%m-%d',      # YYYY-MM-DD
+                            '%m/%d/%Y',      # MM/DD/YYYY
+                            '%d/%m/%Y',      # DD/MM/YYYY
+                            '%m-%d-%Y',      # MM-DD-YYYY
+                            '%d-%m-%Y',      # DD-MM-YYYY
+                            '%Y/%m/%d',      # YYYY/MM/DD
+                            '%d.%m.%Y',      # DD.MM.YYYY
+                            '%m.%d.%Y',      # MM.DD.YYYY
+                            '%Y.%m.%d',      # YYYY.MM.DD
+                        ]
+                        
+                        for fmt in date_formats:
+                            try:
+                                parsed = datetime.strptime(date_str, fmt)
+                                parsed = parsed.replace(tzinfo=timezone.utc)
+                                return parsed
+                            except ValueError:
+                                continue
+                        
+                        raise ValueError(f"Invalid start_date format: {v}. Supported formats: YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS, etc.")
+            elif isinstance(v, datetime):
+                # Ensure timezone-aware
+                if v.tzinfo is None:
+                    v = v.replace(tzinfo=timezone.utc)
+                return v
         return v
     
     @field_validator('end_date')
     @classmethod
     def validate_end_date(cls, v):
-        if v is not None and isinstance(v, str):
-            try:
-                return datetime.fromisoformat(v)
-            except ValueError:
+        if v is not None:
+            if isinstance(v, str):
                 try:
-                    return datetime.fromisoformat(v + 'T23:59:59')
+                    # Try parsing as ISO format datetime string
+                    parsed = datetime.fromisoformat(v.replace('Z', '+00:00'))
+                    # Ensure timezone-aware
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=timezone.utc)
+                    return parsed
                 except ValueError:
-                    raise ValueError("Invalid end date format")
+                    try:
+                        # Try with time component
+                        parsed = datetime.fromisoformat(v + 'T23:59:59')
+                        if parsed.tzinfo is None:
+                            parsed = parsed.replace(tzinfo=timezone.utc)
+                        return parsed
+                    except ValueError:
+                        # Try parsing with different formats
+                        date_str = v.strip()
+                        date_formats = [
+                            '%Y-%m-%d',      # YYYY-MM-DD
+                            '%m/%d/%Y',      # MM/DD/YYYY
+                            '%d/%m/%Y',      # DD/MM/YYYY
+                            '%m-%d-%Y',      # MM-DD-YYYY
+                            '%d-%m-%Y',      # DD-MM-YYYY
+                            '%Y/%m/%d',      # YYYY/MM/DD
+                            '%d.%m.%Y',      # DD.MM.YYYY
+                            '%m.%d.%Y',      # MM.DD.YYYY
+                            '%Y.%m.%d',      # YYYY.MM.DD
+                        ]
+                        
+                        for fmt in date_formats:
+                            try:
+                                parsed = datetime.strptime(date_str, fmt)
+                                parsed = parsed.replace(tzinfo=timezone.utc)
+                                return parsed
+                            except ValueError:
+                                continue
+                        
+                        raise ValueError(f"Invalid end_date format: {v}. Supported formats: YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS, etc.")
+            elif isinstance(v, datetime):
+                # Ensure timezone-aware
+                if v.tzinfo is None:
+                    v = v.replace(tzinfo=timezone.utc)
+                return v
         return v
 
 class LeaveResponse(BaseModel):

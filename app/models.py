@@ -389,3 +389,32 @@ class TimeLog(Base):
         Index('idx_time_log_created_at', 'created_at'),
         Index('idx_time_log_user_created', 'user_id', 'created_at'),
     )
+class LogType(str, enum.Enum):
+    ERROR = "error"
+    SUCCESS = "success"
+
+class Log(Base):
+    __tablename__ = "logs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    log_type = Column(Enum(LogType), nullable=False)
+    message = Column(Text, nullable=False)
+    module = Column(String, nullable=True)  # Module/route where log was created
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # User who triggered the action
+    error_details = Column(Text, nullable=True)  # Stack trace or detailed error info
+    request_path = Column(String, nullable=True)  # API endpoint path
+    request_method = Column(String, nullable=True)  # HTTP method
+    ip_address = Column(String, nullable=True)  # Client IP address
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
+    user = relationship("User", backref="logs")
+    
+    # Database indexes for performance optimization
+    __table_args__ = (
+        Index('idx_log_type', 'log_type'),
+        Index('idx_log_created_at', 'created_at'),
+        Index('idx_log_user_id', 'user_id'),
+        Index('idx_log_module', 'module'),
+        Index('idx_log_type_created', 'log_type', 'created_at'),
+    )

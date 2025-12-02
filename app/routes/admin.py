@@ -684,7 +684,11 @@ async def approve_leave(
     """Approve a leave application (admin only)."""
     try:
         # Get leave application
-        result = await db.execute(select(Leave).where(Leave.id == leave_id))
+        result = await db.execute(
+            select(Leave)
+            .options(selectinload(Leave.user))
+            .where(Leave.id == leave_id)
+        )
         leave = result.scalar_one_or_none()
         
         if not leave:
@@ -723,7 +727,11 @@ async def reject_leave(
     """Reject a leave application (admin only)."""
     try:
         # Get leave application
-        result = await db.execute(select(Leave).where(Leave.id == leave_id))
+        result = await db.execute(
+            select(Leave)
+            .options(selectinload(Leave.user))
+            .where(Leave.id == leave_id)
+        )
         leave = result.scalar_one_or_none()
         
         if not leave:

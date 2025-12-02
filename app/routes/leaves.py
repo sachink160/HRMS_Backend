@@ -88,6 +88,9 @@ async def apply_leave(
         await db.commit()
         await db.refresh(db_leave)
         
+        # Set user relationship to avoid lazy loading issues
+        db_leave.user = current_user
+        
         log_info(f"Leave application created successfully by user {current_user.email}, leave_id={db_leave.id}")
         return db_leave
         
@@ -167,7 +170,11 @@ async def update_leave(
     """Update leave application. Users can only edit pending leaves, admins can edit any."""
     try:
         # Get leave application
-        result = await db.execute(select(Leave).where(Leave.id == leave_id))
+        result = await db.execute(
+            select(Leave)
+            .options(selectinload(Leave.user))
+            .where(Leave.id == leave_id)
+        )
         leave = result.scalar_one_or_none()
         
         if not leave:
@@ -265,7 +272,11 @@ async def update_leave_status(
     """Update leave status (admin only)."""
     try:
         # Get leave application
-        result = await db.execute(select(Leave).where(Leave.id == leave_id))
+        result = await db.execute(
+            select(Leave)
+            .options(selectinload(Leave.user))
+            .where(Leave.id == leave_id)
+        )
         leave = result.scalar_one_or_none()
         
         if not leave:
