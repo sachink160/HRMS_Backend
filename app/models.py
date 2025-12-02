@@ -9,7 +9,6 @@ Base = declarative_base()
 class UserRole(str, enum.Enum):
     USER = "user"
     ADMIN = "admin"
-    SUPER_ADMIN = "super_admin"
 
 class LeaveStatus(str, enum.Enum):
     PENDING = "pending"

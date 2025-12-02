@@ -78,7 +78,7 @@ async def get_employee_details(
     """Get employee details for a specific user."""
     try:
         # Check permissions - user can only view their own details unless admin
-        if current_user.role.value not in ["admin", "super_admin"] and current_user.id != user_id:
+        if current_user.role.value != "admin" and current_user.id != user_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized to view this employee's details"
@@ -235,7 +235,7 @@ async def get_employment_history(
     """Get employment history for a specific user."""
     try:
         # Check permissions - user can only view their own history unless admin
-        if current_user.role.value not in ["admin", "super_admin"] and current_user.id != user_id:
+        if current_user.role.value != "admin" and current_user.id != user_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized to view this employee's history"
@@ -336,7 +336,7 @@ async def get_employee_summary(
     """Get comprehensive employee summary including details, history, and tracking."""
     try:
         # Check permissions - user can only view their own summary unless admin
-        if current_user.role.value not in ["admin", "super_admin"] and current_user.id != user_id:
+        if current_user.role.value != "admin" and current_user.id != user_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized to view this employee's summary"

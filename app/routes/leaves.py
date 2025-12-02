@@ -177,7 +177,7 @@ async def update_leave(
             )
         
         # Permission checks
-        is_admin = current_user.role in ["admin", "super_admin"]
+        is_admin = current_user.role == "admin"
         is_owner = leave.user_id == current_user.id
         
         if not is_admin and not is_owner:

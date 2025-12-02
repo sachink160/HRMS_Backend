@@ -11,7 +11,7 @@ from app.auth import (
     authenticate_user, 
     create_access_token, 
     get_current_user,
-    get_current_super_admin_user,
+    get_current_admin_user,
     get_user_by_email,
     ACCESS_TOKEN_EXPIRE_MINUTES
 )
@@ -22,7 +22,6 @@ router = APIRouter(prefix="/auth", tags=["authentication"])
 
 # Secret codes from environment variables
 ADMIN_SECRET_CODE = os.getenv("ADMIN_SECRET_CODE", "New@123")
-SUPER_ADMIN_SECRET_CODE = os.getenv("SUPER_ADMIN_SECRET_CODE", "New@123")
 
 @router.post("/register", response_model=UserResponse)
 async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
@@ -162,10 +161,10 @@ async def update_profile(
 @router.post("/register-admin", response_model=UserResponse)
 async def register_admin(
     user: UserCreate, 
-    current_user: User = Depends(get_current_super_admin_user),
+    current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Register a new admin user (super admin only)."""
+    """Register a new admin user (admin only)."""
     try:
         # Check if user already exists
         existing_user = await db.execute(select(User).where(User.email == user.email))
@@ -191,7 +190,7 @@ async def register_admin(
         await db.commit()
         await db.refresh(db_user)
         
-        log_info(f"New admin user registered: {user.email} by super admin: {current_user.email}")
+        log_info(f"New admin user registered: {user.email} by admin: {current_user.email}")
         return db_user
         
     except Exception as e:
@@ -207,29 +206,23 @@ async def create_admin_with_secret(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Create admin or super admin user with secret code validation.
+    Create admin user with secret code validation.
     No authentication required, but secret code must match backend configuration.
     """
     try:
-        # Validate secret code based on role
-        if admin_data.role == UserRole.SUPER_ADMIN:
-            if admin_data.secret_code != SUPER_ADMIN_SECRET_CODE:
-                log_error(f"Invalid super admin secret code attempt for email: {admin_data.email}")
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Invalid secret code for super admin creation"
-                )
-        elif admin_data.role == UserRole.ADMIN:
-            if admin_data.secret_code != ADMIN_SECRET_CODE:
-                log_error(f"Invalid admin secret code attempt for email: {admin_data.email}")
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Invalid secret code for admin creation"
-                )
-        else:
+        # Validate role - only admin is allowed
+        if admin_data.role != UserRole.ADMIN:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Role must be 'admin' or 'super_admin'"
+                detail="Role must be 'admin'"
+            )
+        
+        # Validate secret code
+        if admin_data.secret_code != ADMIN_SECRET_CODE:
+            log_error(f"Invalid admin secret code attempt for email: {admin_data.email}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Invalid secret code for admin creation"
             )
         
         # Check if user already exists
@@ -247,7 +240,7 @@ async def create_admin_with_secret(
                 detail="Password must be at least 8 characters long"
             )
         
-        # Create new admin/super admin user
+        # Create new admin user
         hashed_password = get_password_hash(admin_data.password)
         db_user = User(
             email=admin_data.email,
@@ -256,7 +249,7 @@ async def create_admin_with_secret(
             phone=admin_data.phone,
             designation=admin_data.designation,
             joining_date=admin_data.joining_date,
-            role=admin_data.role,
+            role=UserRole.ADMIN,
             is_active=True
         )
         
@@ -264,8 +257,7 @@ async def create_admin_with_secret(
         await db.commit()
         await db.refresh(db_user)
         
-        role_name = "super admin" if admin_data.role == UserRole.SUPER_ADMIN else "admin"
-        log_info(f"New {role_name} user created: {admin_data.email} via secret code")
+        log_info(f"New admin user created: {admin_data.email} via secret code")
         return db_user
         
     except HTTPException:

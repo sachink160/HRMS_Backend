@@ -12,7 +12,7 @@ from app.schema import (
     EmailSendRequest, EmailBulkSendRequest, EmailLogResponse,
     PaginationParams, PaginatedResponse
 )
-from app.auth import get_current_super_admin_user
+from app.auth import get_current_admin_user
 from app.fastapi_email_service import fastapi_email_service
 from app.logger import log_info, log_error
 
@@ -21,7 +21,7 @@ router = APIRouter(prefix="/email", tags=["email-management"])
 # Email Settings Routes
 @router.get("/settings", response_model=EmailSettingsResponse)
 async def get_email_settings(
-    current_user: User = Depends(get_current_super_admin_user),
+    current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get current email settings."""
@@ -38,17 +38,22 @@ async def get_email_settings(
             )
         
         return settings
+    except HTTPException:
+        # Re-raise HTTPException as-is (for 404, etc.)
+        raise
     except Exception as e:
-        log_error(f"Failed to get email settings: {str(e)}")
+        import traceback
+        error_trace = traceback.format_exc()
+        log_error(f"Failed to get email settings: {str(e)}\n{error_trace}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve email settings"
+            detail=f"Failed to retrieve email settings: {str(e)}"
         )
 
 @router.post("/settings", response_model=EmailSettingsResponse)
 async def create_email_settings(
     settings_data: EmailSettingsCreate,
-    current_user: User = Depends(get_current_super_admin_user),
+    current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Create new email settings."""
@@ -89,7 +94,7 @@ async def create_email_settings(
 async def update_email_settings(
     settings_id: int,
     settings_data: EmailSettingsUpdate,
-    current_user: User = Depends(get_current_super_admin_user),
+    current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Update email settings."""
@@ -127,7 +132,7 @@ async def update_email_settings(
 
 @router.post("/settings/test-connection")
 async def test_email_connection(
-    current_user: User = Depends(get_current_super_admin_user),
+    current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Test email connection with current settings."""
@@ -149,7 +154,7 @@ async def test_email_connection(
 # Email Templates Routes
 @router.get("/templates", response_model=List[EmailTemplateResponse])
 async def get_email_templates(
-    current_user: User = Depends(get_current_super_admin_user),
+    current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get all email templates."""
@@ -167,7 +172,7 @@ async def get_email_templates(
 @router.post("/templates", response_model=EmailTemplateResponse)
 async def create_email_template(
     template_data: EmailTemplateCreate,
-    current_user: User = Depends(get_current_super_admin_user),
+    current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Create new email template."""
@@ -193,7 +198,7 @@ async def create_email_template(
 async def update_email_template(
     template_id: int,
     template_data: EmailTemplateUpdate,
-    current_user: User = Depends(get_current_super_admin_user),
+    current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Update email template."""
@@ -232,7 +237,7 @@ async def update_email_template(
 @router.delete("/templates/{template_id}")
 async def delete_email_template(
     template_id: int,
-    current_user: User = Depends(get_current_super_admin_user),
+    current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Delete email template."""
@@ -267,7 +272,7 @@ async def delete_email_template(
 @router.post("/send")
 async def send_email(
     email_data: EmailSendRequest,
-    current_user: User = Depends(get_current_super_admin_user),
+    current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Send a single email."""
@@ -298,7 +303,7 @@ async def send_email(
 @router.post("/send-bulk")
 async def send_bulk_emails(
     email_data: EmailBulkSendRequest,
-    current_user: User = Depends(get_current_super_admin_user),
+    current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Send emails to multiple recipients."""
@@ -325,7 +330,7 @@ async def send_bulk_emails(
 
 @router.get("/users")
 async def get_users_for_email(
-    current_user: User = Depends(get_current_super_admin_user),
+    current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get all users for email selection."""
@@ -359,7 +364,7 @@ async def get_email_logs(
     offset: int = Query(0, ge=0),
     limit: int = Query(10, ge=1, le=100),
     status_filter: Optional[str] = Query(None),
-    current_user: User = Depends(get_current_super_admin_user),
+    current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get email logs with pagination."""

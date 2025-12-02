@@ -142,7 +142,7 @@ class UserLogin(BaseModel):
 class AdminCreateWithSecret(UserBase):
     password: str
     secret_code: str
-    role: UserRole  # "admin" or "super_admin"
+    role: UserRole  # "admin"
 
 # Leave Schemas
 class LeaveBase(BaseModel):

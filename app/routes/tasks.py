@@ -307,7 +307,7 @@ async def get_all_tasks_admin(
     """Get all tasks across all users (Admin/Super Admin only)."""
     try:
         # Check if user is admin or super admin
-        if current_user.role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+        if current_user.role != UserRole.ADMIN:
             raise HTTPException(status_code=403, detail="Access denied. Admin privileges required.")
         
         # Build query
@@ -405,7 +405,7 @@ async def get_admin_task_summary(
     """Get task summary across all users (Admin/Super Admin only)."""
     try:
         # Check if user is admin or super admin
-        if current_user.role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+        if current_user.role != UserRole.ADMIN:
             raise HTTPException(status_code=403, detail="Access denied. Admin privileges required.")
         
         # Get task counts by status

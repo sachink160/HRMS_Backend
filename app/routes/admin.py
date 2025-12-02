@@ -14,7 +14,7 @@ from app.schema import (
     EmploymentHistoryResponse, EmployeeSummary, EnhancedTrackerResponse,
     EmployeeDetailsCreate, EmployeeDetailsUpdate, EmploymentHistoryCreate, AdminUserUpdate
 )
-from app.auth import get_current_admin_user, get_password_hash, get_current_super_admin_user
+from app.auth import get_current_admin_user, get_password_hash
 from app.logger import log_info, log_error
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -52,12 +52,12 @@ async def _save_uploaded_file(file: UploadFile, user_id: int, document_type: str
         f.write(content)
     return str(file_path)
 
-# Super admin can upload documents for any user
+# Admin can upload documents for any user
 @router.post("/users/{user_id}/upload-profile-image")
 async def admin_upload_profile_image(
     user_id: int,
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_super_admin_user),
+    current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
     try:
@@ -80,7 +80,7 @@ async def admin_upload_profile_image(
 async def admin_upload_aadhaar_front(
     user_id: int,
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_super_admin_user),
+    current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
     try:
@@ -103,7 +103,7 @@ async def admin_upload_aadhaar_front(
 async def admin_upload_aadhaar_back(
     user_id: int,
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_super_admin_user),
+    current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
     try:
@@ -126,7 +126,7 @@ async def admin_upload_aadhaar_back(
 async def admin_upload_pan(
     user_id: int,
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_super_admin_user),
+    current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
     try:
@@ -351,14 +351,6 @@ async def update_user(
                 detail="User not found"
             )
         
-        # Check if trying to update super admin (allow if editing own profile)
-        if user.role == UserRole.SUPER_ADMIN and user.id != current_user.id:
-            log_error(f"Attempted to update super admin user {user_id} by {current_user.email}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot update super admin user"
-            )
-        
         # Validate role if provided
         if user_data.role is not None:
             log_info(f"Role validation - received role: {user_data.role} (type: {type(user_data.role)})")
@@ -371,22 +363,14 @@ async def update_user(
                     log_error(f"Invalid role string: {user_data.role}")
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Invalid role value: {user_data.role}. Must be 'user', 'admin', or 'super_admin'"
+                        detail=f"Invalid role value: {user_data.role}. Must be 'user' or 'admin'"
                     )
             
-            if user_data.role not in [UserRole.USER, UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+            if user_data.role not in [UserRole.USER, UserRole.ADMIN]:
                 log_error(f"Role not in allowed values: {user_data.role}")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid role. Must be 'user', 'admin', or 'super_admin'"
-                )
-            
-            # Prevent super admin from changing their own role
-            if user.role == UserRole.SUPER_ADMIN and user.id == current_user.id:
-                log_error(f"Super admin {current_user.email} attempted to change their own role from {user.role} to {user_data.role}")
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Super admin cannot change their own role. Please update other fields without changing the role."
+                    detail="Invalid role. Must be 'user' or 'admin'"
                 )
             
             log_info(f"Role validation passed: {user_data.role}")
@@ -483,14 +467,6 @@ async def patch_user(
                 detail="User not found"
             )
         
-        # Check if trying to update super admin (allow if editing own profile)
-        if user.role == UserRole.SUPER_ADMIN and user.id != current_user.id:
-            log_error(f"Attempted to update super admin user {user_id} by {current_user.email}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot update super admin user"
-            )
-        
         # Validate role if provided
         if user_data.role is not None:
             log_info(f"Role validation - received role: {user_data.role} (type: {type(user_data.role)})")
@@ -503,22 +479,14 @@ async def patch_user(
                     log_error(f"Invalid role string: {user_data.role}")
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Invalid role value: {user_data.role}. Must be 'user', 'admin', or 'super_admin'"
+                        detail=f"Invalid role value: {user_data.role}. Must be 'user' or 'admin'"
                     )
             
-            if user_data.role not in [UserRole.USER, UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+            if user_data.role not in [UserRole.USER, UserRole.ADMIN]:
                 log_error(f"Role not in allowed values: {user_data.role}")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid role. Must be 'user', 'admin', or 'super_admin'"
-                )
-            
-            # Prevent super admin from changing their own role
-            if user.role == UserRole.SUPER_ADMIN and user.id == current_user.id:
-                log_error(f"Super admin {current_user.email} attempted to change their own role from {user.role} to {user_data.role}")
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Super admin cannot change their own role. Please update other fields without changing the role."
+                    detail="Invalid role. Must be 'user' or 'admin'"
                 )
             
             log_info(f"Role validation passed: {user_data.role}")
@@ -1085,18 +1053,6 @@ async def toggle_user_status(
                 detail="Cannot change your own status"
             )
 
-        # Prevent deactivating super admin unless the actor is a super admin
-        try:
-            from app.models import UserRole
-            if user.role == UserRole.SUPER_ADMIN and current_user.role != UserRole.SUPER_ADMIN:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Only super admins can change super admin status"
-                )
-        except Exception:
-            # If enum import/compare fails for any reason, skip this guard rather than crash
-            pass
-        
         # Toggle user status
         user.is_active = not user.is_active
 
@@ -1181,13 +1137,6 @@ async def delete_user(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found"
-            )
-        
-        # Check if trying to delete super admin
-        if user.role == UserRole.SUPER_ADMIN:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot delete super admin user"
             )
         
         # Check if trying to delete own account
@@ -1455,11 +1404,11 @@ async def admin_create_employee_details(
                 detail="Active user not found"
             )
         
-        # Security: Prevent admin from creating details for other admins/super_admins
-        if user.role in ['admin', 'super_admin'] and current_user.role != 'super_admin':
+        # Security: Prevent admin from creating details for other admins
+        if user.role == UserRole.ADMIN and user.id != current_user.id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Cannot create employee details for admin users"
+                detail="Cannot create employee details for other admin users"
             )
         
         # Validate manager_id if provided
@@ -1523,11 +1472,11 @@ async def admin_update_employee_details(
         if not user_obj:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-        # Security: Prevent admin from updating details for other admins/super_admins
-        if user_obj.role in ['admin', 'super_admin'] and current_user.role != 'super_admin':
+        # Security: Prevent admin from updating details for other admins
+        if user_obj.role == UserRole.ADMIN and user_obj.id != current_user.id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Cannot update employee details for admin users"
+                detail="Cannot update employee details for other admin users"
             )
         
         # Validate manager_id if provided
@@ -1590,11 +1539,11 @@ async def admin_patch_employee_details(
         if not user_obj:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-        # Security: Prevent admin from updating details for other admins/super_admins
-        if user_obj.role in ['admin', 'super_admin'] and current_user.role != 'super_admin':
+        # Security: Prevent admin from updating details for other admins
+        if user_obj.role == UserRole.ADMIN and user_obj.id != current_user.id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Cannot update employee details for admin users"
+                detail="Cannot update employee details for other admin users"
             )
         
         # Validate manager_id if provided
@@ -1662,11 +1611,11 @@ async def admin_create_employment_history(
                 detail="Active user not found"
             )
         
-        # Security: Prevent admin from creating history for other admins/super_admins
-        if user.role in ['admin', 'super_admin'] and current_user.role != 'super_admin':
+        # Security: Prevent admin from creating history for other admins
+        if user.role == UserRole.ADMIN and user.id != current_user.id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Cannot create employment history for admin users"
+                detail="Cannot create employment history for other admin users"
             )
         
         # Validate manager_id if provided

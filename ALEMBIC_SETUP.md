@@ -4,6 +4,9 @@
 
 The HRMS project now uses **Alembic** for database migrations. This provides better version control, rollback capabilities, and migration history tracking.
 
+alembic revision --autogenerate -m "Initial migration"
+alembic upgrade head
+
 ## New Migration Structure
 
 ```
