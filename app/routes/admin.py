@@ -593,12 +593,20 @@ async def get_all_leaves(
     offset: int = 0,
     limit: int = 10,
     status_filter: str = None,
+    active_users_only: bool = True,
     current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get all leave applications with optional status filter (admin only)."""
+    """Get all leave applications with optional status filter (admin only).
+    By default, only shows leaves from active users."""
     try:
         query = select(Leave).options(selectinload(Leave.user))
+        
+        # Filter by active users by default
+        if active_users_only:
+            # Get active user IDs
+            active_users_query = select(User.id).where(User.is_active == True)
+            query = query.where(Leave.user_id.in_(active_users_query))
         
         if status_filter:
             query = query.where(Leave.status == status_filter)
@@ -1218,19 +1226,29 @@ async def get_leaves_report(
     start_date: str = None,
     end_date: str = None,
     status_filter: str = None,
+    active_users_only: bool = True,
     current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get comprehensive leaves report grouped by user (admin only)."""
+    """Get comprehensive leaves report grouped by user (admin only).
+    By default, only shows leaves from active users."""
     try:
         from collections import defaultdict
         
-        # Get all users
-        users_result = await db.execute(select(User))
+        # Get active users only by default
+        if active_users_only:
+            users_result = await db.execute(select(User).where(User.is_active == True))
+        else:
+            users_result = await db.execute(select(User))
         all_users = users_result.scalars().all()
         
-        # Build query for leaves
+        # Build query for leaves - filter by active users by default
         query = select(Leave).options(selectinload(Leave.user))
+        
+        # Filter leaves to only include those from active users
+        if active_users_only:
+            active_users_query = select(User.id).where(User.is_active == True)
+            query = query.where(Leave.user_id.in_(active_users_query))
         
         if start_date and end_date:
             start = datetime.strptime(start_date, "%Y-%m-%d")
