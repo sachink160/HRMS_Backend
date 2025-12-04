@@ -343,9 +343,10 @@ class Task(Base):
     )
 
 class TimeLogStatus(str, enum.Enum):
-    ACTIVE = "active"  # Timer is running
-    ON_BREAK = "on_break"  # Currently on break
-    COMPLETED = "completed"  # Timer stopped for the day
+    ACTIVE = "ACTIVE"  # Timer is running
+    PAUSED = "PAUSED"  # Timer is paused (can be resumed)
+    ON_BREAK = "ON_BREAK"  # Currently on break
+    COMPLETED = "COMPLETED"  # Timer stopped for the day (clocked out)
 
 class TimeLog(Base):
     __tablename__ = "time_logs"
@@ -372,7 +373,7 @@ class TimeLog(Base):
     
     # Notes
     notes = Column(Text, nullable=True)
-    
+      
     # System Information
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

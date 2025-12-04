@@ -76,44 +76,77 @@ async def start_timer(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Start the timer for the current user."""
+    """Start or resume the timer for the current user."""
     try:
         now = datetime.now(timezone.utc)
         today = now.date()
         
         # Check if there's already an active time log for today
-        existing_query = select(TimeLog).where(
+        active_query = select(TimeLog).where(
             and_(
                 TimeLog.user_id == current_user.id,
                 TimeLog.log_date == today,
-                TimeLog.status.in_([TimeLogStatus.ACTIVE, TimeLogStatus.ON_BREAK])
+                TimeLog.status == TimeLogStatus.ACTIVE
             )
         )
-        result = await db.execute(existing_query)
-        existing_log = result.scalar_one_or_none()
+        result = await db.execute(active_query)
+        active_log = result.scalar_one_or_none()
         
-        if existing_log:
+        if active_log:
             raise HTTPException(
                 status_code=400,
-                detail="Timer is already running for today. Please stop it first or take a break."
+                detail="Timer is already running for today. Please stop it first."
             )
         
-        # Create new time log
-        db_time_log = TimeLog(
-            user_id=current_user.id,
-            log_date=today,
-            start_time=now,
-            status=TimeLogStatus.ACTIVE,
-            total_break_duration=0,
-            notes=time_log.notes if time_log else None
-        )
+        # Check if there's a paused timer that can be resumed
+        paused_query = select(TimeLog).where(
+            and_(
+                TimeLog.user_id == current_user.id,
+                TimeLog.log_date == today,
+                TimeLog.status == TimeLogStatus.PAUSED
+            )
+        ).options(selectinload(TimeLog.user))
+        paused_result = await db.execute(paused_query)
+        paused_log = paused_result.scalar_one_or_none()
         
-        db.add(db_time_log)
-        await db.commit()
-        await db.refresh(db_time_log)
-        await db.refresh(db_time_log, ['user'])
-        
-        log_info(f"Timer started for user {current_user.email} on {today}")
+        if paused_log:
+            # Resume paused timer
+            # Calculate how long the timer was paused (from updated_at when paused to now)
+            pause_start_time = paused_log.updated_at or paused_log.created_at
+            paused_duration = (now - pause_start_time).total_seconds()
+            
+            # Adjust start_time forward by the paused duration to exclude paused time from elapsed calculation
+            # This ensures elapsed time = now - start_time gives correct work time (excluding paused time)
+            paused_log.start_time = paused_log.start_time + timedelta(seconds=int(paused_duration))
+            paused_log.status = TimeLogStatus.ACTIVE
+            await db.commit()
+            
+            # Reload
+            reload_query = select(TimeLog).where(TimeLog.id == paused_log.id).options(selectinload(TimeLog.user))
+            reload_result = await db.execute(reload_query)
+            db_time_log = reload_result.scalar_one()
+            
+            log_info(f"Timer resumed for user {current_user.email} on {today}")
+        else:
+            # Create new time log
+            db_time_log = TimeLog(
+                user_id=current_user.id,
+                log_date=today,
+                start_time=now,
+                status=TimeLogStatus.ACTIVE,
+                total_break_duration=0,
+                notes=time_log.notes if time_log else None
+            )
+            
+            db.add(db_time_log)
+            await db.commit()
+            
+            # Reload the time_log with user relationship after commit
+            reload_query = select(TimeLog).where(TimeLog.id == db_time_log.id).options(selectinload(TimeLog.user))
+            reload_result = await db.execute(reload_query)
+            db_time_log = reload_result.scalar_one()
+            
+            log_info(f"Timer started for user {current_user.email} on {today}")
         
         # Parse breaks for response
         breaks = parse_breaks(db_time_log.breaks)
@@ -146,18 +179,18 @@ async def stop_timer(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Stop the timer for the current user."""
+    """Stop (pause) the timer for the current user - can be resumed later."""
     try:
         today = date.today()
         
-        # Find active time log for today
+        # Find active time log for today with user relationship loaded
         query = select(TimeLog).where(
             and_(
                 TimeLog.user_id == current_user.id,
                 TimeLog.log_date == today,
-                TimeLog.status.in_([TimeLogStatus.ACTIVE, TimeLogStatus.ON_BREAK])
+                TimeLog.status == TimeLogStatus.ACTIVE
             )
-        )
+        ).options(selectinload(TimeLog.user))
         result = await db.execute(query)
         time_log = result.scalar_one_or_none()
         
@@ -167,30 +200,17 @@ async def stop_timer(
                 detail="No active timer found for today. Please start the timer first."
             )
         
-        now = datetime.now(timezone.utc)
-        
-        # If on break, end the break first
-        if time_log.status == TimeLogStatus.ON_BREAK:
-            breaks = parse_breaks(time_log.breaks)
-            if breaks and breaks[-1].end is None:
-                breaks[-1].end = now
-                breaks[-1].duration = int((now - breaks[-1].start).total_seconds())
-                time_log.breaks = serialize_breaks(breaks)
-                time_log.total_break_duration = calculate_break_duration(breaks)
-        
-        # Update time log
-        time_log.end_time = now
-        time_log.status = TimeLogStatus.COMPLETED
-        time_log.total_work_duration = calculate_work_duration(
-            time_log.start_time,
-            now,
-            time_log.total_break_duration
-        )
+        # Pause the timer (don't set end_time, just change status)
+        time_log.status = TimeLogStatus.PAUSED
         
         await db.commit()
-        await db.refresh(time_log, ['user'])
         
-        log_info(f"Timer stopped for user {current_user.email} on {today}")
+        # Reload the time_log with user relationship after commit
+        reload_query = select(TimeLog).where(TimeLog.id == time_log.id).options(selectinload(TimeLog.user))
+        reload_result = await db.execute(reload_query)
+        time_log = reload_result.scalar_one()
+        
+        log_info(f"Timer paused for user {current_user.email} on {today}")
         
         # Parse breaks for response
         breaks = parse_breaks(time_log.breaks)
@@ -218,6 +238,88 @@ async def stop_timer(
         log_error(f"Error stopping timer: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to stop timer")
 
+@router.post("/clock-out", response_model=TimeLogResponse)
+async def clock_out(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Clock out - final end of work session for the day."""
+    try:
+        today = date.today()
+        
+        # Find active or paused time log for today with user relationship loaded
+        query = select(TimeLog).where(
+            and_(
+                TimeLog.user_id == current_user.id,
+                TimeLog.log_date == today,
+                TimeLog.status.in_([TimeLogStatus.ACTIVE, TimeLogStatus.PAUSED, TimeLogStatus.ON_BREAK])
+            )
+        ).options(selectinload(TimeLog.user))
+        result = await db.execute(query)
+        time_log = result.scalar_one_or_none()
+        
+        if not time_log:
+            raise HTTPException(
+                status_code=404,
+                detail="No active timer found for today. Please start the timer first."
+            )
+        
+        now = datetime.now(timezone.utc)
+        
+        # If on break, end the break first (for backward compatibility)
+        if time_log.status == TimeLogStatus.ON_BREAK:
+            breaks = parse_breaks(time_log.breaks)
+            if breaks and breaks[-1].end is None:
+                breaks[-1].end = now
+                breaks[-1].duration = int((now - breaks[-1].start).total_seconds())
+                time_log.breaks = serialize_breaks(breaks)
+                time_log.total_break_duration = calculate_break_duration(breaks)
+        
+        # Final clock out - set end_time and mark as completed
+        time_log.end_time = now
+        time_log.status = TimeLogStatus.COMPLETED
+        # Calculate work duration (total time minus breaks)
+        time_log.total_work_duration = calculate_work_duration(
+            time_log.start_time,
+            now,
+            time_log.total_break_duration or 0
+        )
+        
+        await db.commit()
+        
+        # Reload the time_log with user relationship after commit
+        reload_query = select(TimeLog).where(TimeLog.id == time_log.id).options(selectinload(TimeLog.user))
+        reload_result = await db.execute(reload_query)
+        time_log = reload_result.scalar_one()
+        
+        log_info(f"User {current_user.email} clocked out on {today}")
+        
+        # Parse breaks for response
+        breaks = parse_breaks(time_log.breaks)
+        response = TimeLogResponse(
+            id=time_log.id,
+            user_id=time_log.user_id,
+            log_date=time_log.log_date,
+            start_time=time_log.start_time,
+            end_time=time_log.end_time,
+            breaks=breaks if breaks else None,
+            total_break_duration=time_log.total_break_duration,
+            total_work_duration=time_log.total_work_duration,
+            status=time_log.status,
+            notes=time_log.notes,
+            created_at=time_log.created_at,
+            updated_at=time_log.updated_at,
+            user=time_log.user
+        )
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        log_error(f"Error clocking out: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to clock out")
+
 @router.post("/break/start", response_model=TimeLogResponse)
 async def start_break(
     current_user: User = Depends(get_current_user),
@@ -227,14 +329,14 @@ async def start_break(
     try:
         today = date.today()
         
-        # Find active time log for today
+        # Find active time log for today with user relationship loaded
         query = select(TimeLog).where(
             and_(
                 TimeLog.user_id == current_user.id,
                 TimeLog.log_date == today,
                 TimeLog.status == TimeLogStatus.ACTIVE
             )
-        )
+        ).options(selectinload(TimeLog.user))
         result = await db.execute(query)
         time_log = result.scalar_one_or_none()
         
@@ -263,7 +365,11 @@ async def start_break(
         time_log.status = TimeLogStatus.ON_BREAK
         
         await db.commit()
-        await db.refresh(time_log, ['user'])
+        
+        # Reload the time_log with user relationship after commit
+        reload_query = select(TimeLog).where(TimeLog.id == time_log.id).options(selectinload(TimeLog.user))
+        reload_result = await db.execute(reload_query)
+        time_log = reload_result.scalar_one()
         
         log_info(f"Break started for user {current_user.email} on {today}")
         
@@ -302,14 +408,14 @@ async def end_break(
     try:
         today = date.today()
         
-        # Find time log on break for today
+        # Find time log on break for today with user relationship loaded
         query = select(TimeLog).where(
             and_(
                 TimeLog.user_id == current_user.id,
                 TimeLog.log_date == today,
                 TimeLog.status == TimeLogStatus.ON_BREAK
             )
-        )
+        ).options(selectinload(TimeLog.user))
         result = await db.execute(query)
         time_log = result.scalar_one_or_none()
         
@@ -338,7 +444,11 @@ async def end_break(
         time_log.status = TimeLogStatus.ACTIVE
         
         await db.commit()
-        await db.refresh(time_log, ['user'])
+        
+        # Reload the time_log with user relationship after commit
+        reload_query = select(TimeLog).where(TimeLog.id == time_log.id).options(selectinload(TimeLog.user))
+        reload_result = await db.execute(reload_query)
+        time_log = reload_result.scalar_one()
         
         log_info(f"Break ended for user {current_user.email} on {today}")
         
@@ -373,7 +483,7 @@ async def get_current_timer(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get the current active timer for the current user."""
+    """Get the current active or paused timer for the current user."""
     try:
         today = date.today()
         
@@ -381,7 +491,7 @@ async def get_current_timer(
             and_(
                 TimeLog.user_id == current_user.id,
                 TimeLog.log_date == today,
-                TimeLog.status.in_([TimeLogStatus.ACTIVE, TimeLogStatus.ON_BREAK])
+                TimeLog.status.in_([TimeLogStatus.ACTIVE, TimeLogStatus.PAUSED, TimeLogStatus.ON_BREAK])
             )
         ).options(selectinload(TimeLog.user))
         
@@ -532,23 +642,28 @@ async def get_my_statistics(
         current_log = current_result.scalar_one_or_none()
         current_status = current_log.status if current_log else None
         
-        # Get today's hours
+        # Get today's hours - aggregate all logs for today
         today_query = select(TimeLog).where(
             and_(
                 TimeLog.user_id == current_user.id,
                 TimeLog.log_date == today
             )
-        )
+        ).order_by(TimeLog.created_at.desc())
         today_result = await db.execute(today_query)
-        today_log = today_result.scalar_one_or_none()
+        today_logs = today_result.scalars().all()
         
         today_work_hours = None
         today_break_hours = None
-        if today_log:
-            if today_log.total_work_duration:
-                today_work_hours = today_log.total_work_duration / 3600.0
-            if today_log.total_break_duration:
-                today_break_hours = today_log.total_break_duration / 3600.0
+        
+        if today_logs:
+            # Aggregate all today's logs (in case of multiple entries)
+            total_today_work = sum(log.total_work_duration or 0 for log in today_logs)
+            total_today_break = sum(log.total_break_duration or 0 for log in today_logs)
+            
+            if total_today_work > 0:
+                today_work_hours = total_today_work / 3600.0
+            if total_today_break > 0:
+                today_break_hours = total_today_break / 3600.0
         
         statistics = TimeLogStatistics(
             total_work_hours=total_work_hours,
@@ -720,7 +835,7 @@ async def get_admin_statistics(
             current_log = current_result.scalar_one_or_none()
             current_status = current_log.status if current_log else None
         
-        # Get today's hours (for specific user if provided)
+        # Get today's hours (for specific user if provided) - aggregate all logs for today
         today_work_hours = None
         today_break_hours = None
         if user_id:
@@ -730,15 +845,19 @@ async def get_admin_statistics(
                     TimeLog.user_id == user_id,
                     TimeLog.log_date == today
                 )
-            )
+            ).order_by(TimeLog.created_at.desc())
             today_result = await db.execute(today_query)
-            today_log = today_result.scalar_one_or_none()
+            today_logs = today_result.scalars().all()
             
-            if today_log:
-                if today_log.total_work_duration:
-                    today_work_hours = today_log.total_work_duration / 3600.0
-                if today_log.total_break_duration:
-                    today_break_hours = today_log.total_break_duration / 3600.0
+            if today_logs:
+                # Aggregate all today's logs (in case of multiple entries)
+                total_today_work = sum(log.total_work_duration or 0 for log in today_logs)
+                total_today_break = sum(log.total_break_duration or 0 for log in today_logs)
+                
+                if total_today_work > 0:
+                    today_work_hours = total_today_work / 3600.0
+                if total_today_break > 0:
+                    today_break_hours = total_today_break / 3600.0
         
         statistics = TimeLogStatistics(
             total_work_hours=total_work_hours,
