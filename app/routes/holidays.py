@@ -8,10 +8,23 @@ from app.models import User, Holiday
 from app.schema import HolidayCreate, HolidayResponse, HolidayUpdate
 from app.auth import get_current_user, get_current_admin_user
 from app.logger import log_info, log_error
+from app.response import APIResponse
 
 router = APIRouter(prefix="/holidays", tags=["holidays"])
 
-@router.post("/", response_model=HolidayResponse)
+def holiday_to_dict(holiday: Holiday) -> dict:
+    """Convert Holiday model to dictionary for response."""
+    return {
+        "id": holiday.id,
+        "date": holiday.date.isoformat() if holiday.date else None,
+        "title": holiday.title,
+        "description": holiday.description,
+        "is_active": holiday.is_active,
+        "created_at": holiday.created_at.isoformat() if holiday.created_at else None,
+        "updated_at": holiday.updated_at.isoformat() if holiday.updated_at else None,
+    }
+
+@router.post("/")
 async def create_holiday(
     holiday: HolidayCreate,
     current_user: User = Depends(get_current_admin_user),
@@ -24,10 +37,7 @@ async def create_holiday(
             select(Holiday).where(Holiday.date == holiday.date)
         )
         if existing_holiday.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Holiday already exists for this date"
-            )
+            return APIResponse.bad_request(message="Holiday already exists for this date")
         
         # Create holiday
         db_holiday = Holiday(
@@ -42,16 +52,18 @@ async def create_holiday(
         await db.refresh(db_holiday)
         
         log_info(f"Holiday created by admin {current_user.email}: {holiday.title}")
-        return db_holiday
+        return APIResponse.created(
+            data=holiday_to_dict(db_holiday),
+            message="Holiday created successfully"
+        )
         
+    except HTTPException:
+        raise
     except Exception as e:
         log_error(f"Create holiday error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create holiday"
-        )
+        return APIResponse.internal_error(message="Failed to create holiday")
 
-@router.get("/", response_model=List[HolidayResponse])
+@router.get("/")
 async def get_holidays(
     offset: int = 0,
     limit: int = 10,
@@ -67,16 +79,19 @@ async def get_holidays(
             .order_by(Holiday.date.asc())
         )
         holidays = result.scalars().all()
-        return holidays
+        holidays_data = [holiday_to_dict(h) for h in holidays]
+        return APIResponse.success(
+            data=holidays_data,
+            message="Holidays retrieved successfully"
+        )
         
+    except HTTPException:
+        raise
     except Exception as e:
         log_error(f"Get holidays error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch holidays"
-        )
+        return APIResponse.internal_error(message="Failed to fetch holidays")
 
-@router.get("/upcoming", response_model=List[HolidayResponse])
+@router.get("/upcoming")
 async def get_upcoming_holidays(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
@@ -90,16 +105,19 @@ async def get_upcoming_holidays(
             .order_by(Holiday.date.asc())
         )
         holidays = result.scalars().all()
-        return holidays
+        holidays_data = [holiday_to_dict(h) for h in holidays]
+        return APIResponse.success(
+            data=holidays_data,
+            message="Upcoming holidays retrieved successfully"
+        )
         
+    except HTTPException:
+        raise
     except Exception as e:
         log_error(f"Get upcoming holidays error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch upcoming holidays"
-        )
+        return APIResponse.internal_error(message="Failed to fetch upcoming holidays")
 
-@router.get("/{holiday_id}", response_model=HolidayResponse)
+@router.get("/{holiday_id}")
 async def get_holiday(
     holiday_id: int,
     current_user: User = Depends(get_current_user),
@@ -111,21 +129,20 @@ async def get_holiday(
         holiday = result.scalar_one_or_none()
         
         if not holiday:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Holiday not found"
-            )
+            return APIResponse.not_found(message="Holiday not found", resource="holiday")
         
-        return holiday
+        return APIResponse.success(
+            data=holiday_to_dict(holiday),
+            message="Holiday retrieved successfully"
+        )
         
+    except HTTPException:
+        raise
     except Exception as e:
         log_error(f"Get holiday error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch holiday"
-        )
+        return APIResponse.internal_error(message="Failed to fetch holiday")
 
-@router.put("/{holiday_id}", response_model=HolidayResponse)
+@router.put("/{holiday_id}")
 async def update_holiday(
     holiday_id: int,
     holiday_update: HolidayUpdate,
@@ -139,13 +156,10 @@ async def update_holiday(
         holiday = result.scalar_one_or_none()
         
         if not holiday:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Holiday not found"
-            )
+            return APIResponse.not_found(message="Holiday not found", resource="holiday")
         
         # Update holiday fields
-        update_data = holiday_update.dict(exclude_unset=True)
+        update_data = holiday_update.model_dump(exclude_unset=True)
         for field, value in update_data.items():
             setattr(holiday, field, value)
         
@@ -153,14 +167,16 @@ async def update_holiday(
         await db.refresh(holiday)
         
         log_info(f"Holiday {holiday_id} updated by admin {current_user.email}")
-        return holiday
+        return APIResponse.success(
+            data=holiday_to_dict(holiday),
+            message="Holiday updated successfully"
+        )
         
+    except HTTPException:
+        raise
     except Exception as e:
         log_error(f"Update holiday error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update holiday"
-        )
+        return APIResponse.internal_error(message="Failed to update holiday")
 
 @router.delete("/{holiday_id}")
 async def delete_holiday(
@@ -175,21 +191,20 @@ async def delete_holiday(
         holiday = result.scalar_one_or_none()
         
         if not holiday:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Holiday not found"
-            )
+            return APIResponse.not_found(message="Holiday not found", resource="holiday")
         
         # Delete holiday
         await db.execute(delete(Holiday).where(Holiday.id == holiday_id))
         await db.commit()
         
         log_info(f"Holiday {holiday_id} deleted by admin {current_user.email}")
-        return {"message": "Holiday deleted successfully"}
+        return APIResponse.success(
+            data={},
+            message="Holiday deleted successfully"
+        )
         
+    except HTTPException:
+        raise
     except Exception as e:
         log_error(f"Delete holiday error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete holiday"
-        )
+        return APIResponse.internal_error(message="Failed to delete holiday")

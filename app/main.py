@@ -1,12 +1,20 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.exceptions import RequestValidationError
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import create_async_engine
 from app.database import engine
 from app.models import Base
-from app.routes import auth, users, leaves, holidays, admin, email, employees, tasks, time_tracker
+from app.routes import auth, users, leaves, holidays, admin, email, employees, tasks
 from app.logger import log_info, log_error
+from app.exceptions import (
+    http_exception_handler,
+    validation_exception_handler,
+    general_exception_handler
+)
+from app.response import APIResponse
+from app.storage import STORAGE_TYPE
 import os
 
 @asynccontextmanager
@@ -40,6 +48,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Register exception handlers for standardized error responses
+app.add_exception_handler(HTTPException, http_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(Exception, general_exception_handler)
+
 # Include routers
 app.include_router(auth.router)
 app.include_router(users.router)
@@ -49,27 +62,37 @@ app.include_router(admin.router)
 app.include_router(email.router)
 app.include_router(employees.router)
 app.include_router(tasks.router)
-app.include_router(time_tracker.router)
 
-# Mount static files for uploaded documents
-if not os.path.exists("uploads"):
-    os.makedirs("uploads")
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+# Mount static files for uploaded documents (only for local storage)
+# For S3 storage, files are served directly from S3 URLs
+if STORAGE_TYPE == "local":
+    if not os.path.exists("uploads"):
+        os.makedirs("uploads")
+    app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+    log_info("Local file storage enabled - static files mounted at /uploads")
+else:
+    log_info(f"S3 storage enabled - files will be served from S3 bucket")
 
 @app.get("/")
 async def root():
     """Root endpoint with API information."""
-    return {
-        "message": "HRMS Backend API",
-        "version": "1.0.0",
-        "docs": "/docs",
-        "redoc": "/redoc"
-    }
+    return APIResponse.success(
+        data={
+            "message": "HRMS Backend API",
+            "version": "1.0.0",
+            "docs": "/docs",
+            "redoc": "/redoc"
+        },
+        message="HRMS Backend API is running"
+    )
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy", "message": "HRMS Backend is running"}
+    return APIResponse.success(
+        data={"status": "healthy"},
+        message="HRMS Backend is running"
+    )
 
 # if __name__ == "__main__":
 #     import uvicorn

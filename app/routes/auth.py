@@ -16,6 +16,7 @@ from app.auth import (
     ACCESS_TOKEN_EXPIRE_MINUTES
 )
 from app.logger import log_info, log_error
+from app.response import APIResponse
 import os
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
@@ -23,17 +24,14 @@ router = APIRouter(prefix="/auth", tags=["authentication"])
 # Secret codes from environment variables
 ADMIN_SECRET_CODE = os.getenv("ADMIN_SECRET_CODE", "New@123")
 
-@router.post("/register", response_model=UserResponse)
+@router.post("/register")
 async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
     """Register a new user."""
     try:
         # Check if user already exists
         existing_user = await db.execute(select(User).where(User.email == user.email))
         if existing_user.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already registered"
-            )
+            return APIResponse.bad_request(message="Email already registered")
         
         # Create new user with default USER role
         hashed_password = get_password_hash(user.password)
@@ -52,43 +50,47 @@ async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
         await db.refresh(db_user)
         
         log_info(f"New user registered: {user.email} with role: {db_user.role}")
-        return db_user
         
+        # Convert user to dict for response
+        user_data = {
+            "id": db_user.id,
+            "email": db_user.email,
+            "name": db_user.name,
+            "phone": db_user.phone,
+            "designation": db_user.designation,
+            "role": db_user.role.value,
+            "is_active": db_user.is_active,
+            "created_at": db_user.created_at.isoformat() if db_user.created_at else None,
+            "updated_at": db_user.updated_at.isoformat() if db_user.updated_at else None
+        }
+        
+        return APIResponse.created(
+            data=user_data,
+            message="User registered successfully"
+        )
+        
+    except HTTPException:
+        raise
     except Exception as e:
         log_error(f"Registration error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Registration failed"
-        )
+        return APIResponse.internal_error(message="Registration failed")
 
-@router.post("/login", response_model=dict)
+@router.post("/login")
 async def login(login_data: UserLogin, db: AsyncSession = Depends(get_db)):
     """Login user and return access token with user data."""
     try:
         # First check if user exists and is active
         user = await get_user_by_email(db, login_data.email)
         if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Incorrect email or password",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+            return APIResponse.unauthorized(message="Incorrect email or password")
         
         if not user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Account is deactivated. Please contact administrator.",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+            return APIResponse.unauthorized(message="Account is deactivated. Please contact administrator.")
         
         # Now authenticate with password
         user = await authenticate_user(db, login_data.email, login_data.password)
         if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Incorrect email or password",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+            return APIResponse.unauthorized(message="Incorrect email or password")
         
         access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         access_token = create_access_token(
@@ -96,39 +98,72 @@ async def login(login_data: UserLogin, db: AsyncSession = Depends(get_db)):
         )
         
         log_info(f"User logged in: {user.email}")
-        return {
-            "access_token": access_token, 
+        
+        login_data = {
+            "access_token": access_token,
             "token_type": "bearer",
             "user": {
                 "id": user.id,
                 "email": user.email,
                 "name": user.name,
                 "phone": user.phone,
-                "role": user.role,
+                "role": user.role.value,
                 "is_active": user.is_active,
-                "created_at": user.created_at,
-                "updated_at": user.updated_at
+                "created_at": user.created_at.isoformat() if user.created_at else None,
+                "updated_at": user.updated_at.isoformat() if user.updated_at else None
             }
         }
         
+        return APIResponse.success(
+            data=login_data,
+            message="Login successful"
+        )
+        
+    except HTTPException:
+        raise
     except Exception as e:
         log_error(f"Login error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Login failed"
-        )
+        return APIResponse.internal_error(message="Login failed")
 
-@router.get("/me", response_model=UserResponse)
+@router.get("/me")
 async def read_users_me(current_user: User = Depends(get_current_user)):
     """Get current user information."""
-    return current_user
+    user_data = {
+        "id": current_user.id,
+        "email": current_user.email,
+        "name": current_user.name,
+        "phone": current_user.phone,
+        "designation": current_user.designation,
+        "role": current_user.role.value,
+        "is_active": current_user.is_active,
+        "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
+        "updated_at": current_user.updated_at.isoformat() if current_user.updated_at else None
+    }
+    return APIResponse.success(
+        data=user_data,
+        message="User information retrieved successfully"
+    )
 
-@router.get("/profile", response_model=UserResponse)
+@router.get("/profile")
 async def get_profile(current_user: User = Depends(get_current_user)):
     """Get current user profile."""
-    return current_user
+    user_data = {
+        "id": current_user.id,
+        "email": current_user.email,
+        "name": current_user.name,
+        "phone": current_user.phone,
+        "designation": current_user.designation,
+        "role": current_user.role.value,
+        "is_active": current_user.is_active,
+        "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
+        "updated_at": current_user.updated_at.isoformat() if current_user.updated_at else None
+    }
+    return APIResponse.success(
+        data=user_data,
+        message="Profile retrieved successfully"
+    )
 
-@router.put("/profile", response_model=UserResponse)
+@router.put("/profile")
 async def update_profile(
     user_update: UserUpdate, 
     current_user: User = Depends(get_current_user),
@@ -149,16 +184,31 @@ async def update_profile(
         await db.refresh(current_user)
         
         log_info(f"User profile updated: {current_user.email}")
-        return current_user
         
+        user_data = {
+            "id": current_user.id,
+            "email": current_user.email,
+            "name": current_user.name,
+            "phone": current_user.phone,
+            "designation": current_user.designation,
+            "role": current_user.role.value,
+            "is_active": current_user.is_active,
+            "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
+            "updated_at": current_user.updated_at.isoformat() if current_user.updated_at else None
+        }
+        
+        return APIResponse.success(
+            data=user_data,
+            message="Profile updated successfully"
+        )
+        
+    except HTTPException:
+        raise
     except Exception as e:
         log_error(f"Profile update error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Profile update failed"
-        )
+        return APIResponse.internal_error(message="Profile update failed")
 
-@router.post("/register-admin", response_model=UserResponse)
+@router.post("/register-admin")
 async def register_admin(
     user: UserCreate, 
     current_user: User = Depends(get_current_admin_user),
@@ -169,10 +219,7 @@ async def register_admin(
         # Check if user already exists
         existing_user = await db.execute(select(User).where(User.email == user.email))
         if existing_user.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already registered"
-            )
+            return APIResponse.bad_request(message="Email already registered")
         
         # Create new admin user
         hashed_password = get_password_hash(user.password)
@@ -191,16 +238,31 @@ async def register_admin(
         await db.refresh(db_user)
         
         log_info(f"New admin user registered: {user.email} by admin: {current_user.email}")
-        return db_user
         
+        user_data = {
+            "id": db_user.id,
+            "email": db_user.email,
+            "name": db_user.name,
+            "phone": db_user.phone,
+            "designation": db_user.designation,
+            "role": db_user.role.value,
+            "is_active": db_user.is_active,
+            "created_at": db_user.created_at.isoformat() if db_user.created_at else None,
+            "updated_at": db_user.updated_at.isoformat() if db_user.updated_at else None
+        }
+        
+        return APIResponse.created(
+            data=user_data,
+            message="Admin user registered successfully"
+        )
+        
+    except HTTPException:
+        raise
     except Exception as e:
         log_error(f"Admin registration error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Admin registration failed"
-        )
+        return APIResponse.internal_error(message="Admin registration failed")
 
-@router.post("/create-admin", response_model=UserResponse)
+@router.post("/create-admin")
 async def create_admin_with_secret(
     admin_data: AdminCreateWithSecret,
     db: AsyncSession = Depends(get_db)
@@ -212,33 +274,21 @@ async def create_admin_with_secret(
     try:
         # Validate role - only admin is allowed
         if admin_data.role != UserRole.ADMIN:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Role must be 'admin'"
-            )
+            return APIResponse.bad_request(message="Role must be 'admin'")
         
         # Validate secret code
         if admin_data.secret_code != ADMIN_SECRET_CODE:
             log_error(f"Invalid admin secret code attempt for email: {admin_data.email}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Invalid secret code for admin creation"
-            )
+            return APIResponse.forbidden(message="Invalid secret code for admin creation")
         
         # Check if user already exists
         existing_user = await db.execute(select(User).where(User.email == admin_data.email))
         if existing_user.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already registered"
-            )
+            return APIResponse.bad_request(message="Email already registered")
         
         # Validate password strength
         if len(admin_data.password) < 8:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Password must be at least 8 characters long"
-            )
+            return APIResponse.bad_request(message="Password must be at least 8 characters long")
         
         # Create new admin user
         hashed_password = get_password_hash(admin_data.password)
@@ -258,13 +308,26 @@ async def create_admin_with_secret(
         await db.refresh(db_user)
         
         log_info(f"New admin user created: {admin_data.email} via secret code")
-        return db_user
+        
+        user_data = {
+            "id": db_user.id,
+            "email": db_user.email,
+            "name": db_user.name,
+            "phone": db_user.phone,
+            "designation": db_user.designation,
+            "role": db_user.role.value,
+            "is_active": db_user.is_active,
+            "created_at": db_user.created_at.isoformat() if db_user.created_at else None,
+            "updated_at": db_user.updated_at.isoformat() if db_user.updated_at else None
+        }
+        
+        return APIResponse.created(
+            data=user_data,
+            message="Admin user created successfully"
+        )
         
     except HTTPException:
         raise
     except Exception as e:
         log_error(f"Create admin with secret code error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create admin user"
-        )
+        return APIResponse.internal_error(message="Failed to create admin user")

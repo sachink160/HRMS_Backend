@@ -16,6 +16,7 @@ from app.schema import (
 )
 from app.auth import get_current_admin_user, get_password_hash
 from app.logger import log_info, log_error
+from app.storage import storage
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -27,30 +28,6 @@ async def safe_get_employee_details(db: AsyncSession, user_id: int):
     except Exception as e:
         log_error(f"Error fetching user {user_id}: {str(e)}")
         return None
-# Helpers for file upload (duplicate of users router helpers)
-UPLOAD_DIR = Path("uploads")
-UPLOAD_DIR.mkdir(exist_ok=True)
-ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
-MAX_FILE_SIZE = 10 * 1024 * 1024
-
-def _validate_file(file: UploadFile) -> bool:
-    if not file.filename:
-        return False
-    ext = Path(file.filename).suffix.lower()
-    return ext in ALLOWED_EXTENSIONS
-
-async def _save_uploaded_file(file: UploadFile, user_id: int, document_type: str) -> str:
-    if not _validate_file(file):
-        raise HTTPException(status_code=400, detail="Invalid file type. Only JPG, PNG, and PDF files are allowed.")
-    ext = Path(file.filename).suffix.lower()
-    unique_filename = f"{user_id}_{document_type}_{uuid.uuid4()}{ext}"
-    file_path = UPLOAD_DIR / unique_filename
-    content = await file.read()
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail="File size too large. Maximum size is 10MB.")
-    with open(file_path, "wb") as f:
-        f.write(content)
-    return str(file_path)
 
 # Admin can upload documents for any user
 @router.post("/users/{user_id}/upload-profile-image")
@@ -65,11 +42,21 @@ async def admin_upload_profile_image(
         target_user = result.scalar_one_or_none()
         if not target_user:
             raise HTTPException(status_code=404, detail="User not found")
-        file_path = await _save_uploaded_file(file, user_id, "profile")
+        
+        # Delete old file if exists
+        if target_user.profile_image:
+            await storage.delete_file(target_user.profile_image)
+        
+        # Upload new file using storage service
+        file_path = await storage.upload_file(file, user_id, "profile")
         target_user.profile_image = file_path
         target_user.profile_image_status = DocumentStatus.APPROVED
         await db.commit()
-        return {"file_path": file_path}
+        
+        return {
+            "file_path": file_path,
+            "file_url": storage.get_file_url(file_path)
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -88,11 +75,21 @@ async def admin_upload_aadhaar_front(
         target_user = result.scalar_one_or_none()
         if not target_user:
             raise HTTPException(status_code=404, detail="User not found")
-        file_path = await _save_uploaded_file(file, user_id, "aadhaar_front")
+        
+        # Delete old file if exists
+        if target_user.aadhaar_front:
+            await storage.delete_file(target_user.aadhaar_front)
+        
+        # Upload new file using storage service
+        file_path = await storage.upload_file(file, user_id, "aadhaar_front")
         target_user.aadhaar_front = file_path
         target_user.aadhaar_front_status = DocumentStatus.APPROVED
         await db.commit()
-        return {"file_path": file_path}
+        
+        return {
+            "file_path": file_path,
+            "file_url": storage.get_file_url(file_path)
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -111,11 +108,21 @@ async def admin_upload_aadhaar_back(
         target_user = result.scalar_one_or_none()
         if not target_user:
             raise HTTPException(status_code=404, detail="User not found")
-        file_path = await _save_uploaded_file(file, user_id, "aadhaar_back")
+        
+        # Delete old file if exists
+        if target_user.aadhaar_back:
+            await storage.delete_file(target_user.aadhaar_back)
+        
+        # Upload new file using storage service
+        file_path = await storage.upload_file(file, user_id, "aadhaar_back")
         target_user.aadhaar_back = file_path
         target_user.aadhaar_back_status = DocumentStatus.APPROVED
         await db.commit()
-        return {"file_path": file_path}
+        
+        return {
+            "file_path": file_path,
+            "file_url": storage.get_file_url(file_path)
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -134,11 +141,21 @@ async def admin_upload_pan(
         target_user = result.scalar_one_or_none()
         if not target_user:
             raise HTTPException(status_code=404, detail="User not found")
-        file_path = await _save_uploaded_file(file, user_id, "pan")
+        
+        # Delete old file if exists
+        if target_user.pan_image:
+            await storage.delete_file(target_user.pan_image)
+        
+        # Upload new file using storage service
+        file_path = await storage.upload_file(file, user_id, "pan")
         target_user.pan_image = file_path
         target_user.pan_image_status = DocumentStatus.APPROVED
         await db.commit()
-        return {"file_path": file_path}
+        
+        return {
+            "file_path": file_path,
+            "file_url": storage.get_file_url(file_path)
+        }
     except HTTPException:
         raise
     except Exception as e:

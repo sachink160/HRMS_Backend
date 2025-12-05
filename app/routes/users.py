@@ -12,67 +12,52 @@ from app.schema import (
 )
 from app.auth import get_current_user, get_current_admin_user
 from app.logger import log_info, log_error
+from app.response import APIResponse
+from app.storage import storage
 import os
-import uuid
-from pathlib import Path
-from typing import Optional
 
 router = APIRouter(prefix="/users", tags=["users"])
 
-# Create uploads directory if it doesn't exist
-UPLOAD_DIR = Path("uploads")
-UPLOAD_DIR.mkdir(exist_ok=True)
+def user_to_dict(user: User) -> dict:
+    """Convert User model to dictionary for response."""
+    # Get file URLs using storage service
+    profile_image_url = storage.get_file_url(user.profile_image) if user.profile_image else None
+    aadhaar_front_url = storage.get_file_url(user.aadhaar_front) if user.aadhaar_front else None
+    aadhaar_back_url = storage.get_file_url(user.aadhaar_back) if user.aadhaar_back else None
+    pan_image_url = storage.get_file_url(user.pan_image) if user.pan_image else None
+    
+    return {
+        "id": user.id,
+        "email": user.email,
+        "name": user.name,
+        "phone": user.phone,
+        "designation": user.designation,
+        "role": user.role.value if hasattr(user.role, 'value') else str(user.role),
+        "is_active": user.is_active,
+        "profile_image": profile_image_url,
+        "aadhaar_front": aadhaar_front_url,
+        "aadhaar_back": aadhaar_back_url,
+        "pan_image": pan_image_url,
+        "profile_image_status": user.profile_image_status.value if user.profile_image_status else None,
+        "aadhaar_front_status": user.aadhaar_front_status.value if user.aadhaar_front_status else None,
+        "aadhaar_back_status": user.aadhaar_back_status.value if user.aadhaar_back_status else None,
+        "pan_image_status": user.pan_image_status.value if user.pan_image_status else None,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "updated_at": user.updated_at.isoformat() if user.updated_at else None,
+        "department": user.department,
+        "manager_id": user.manager_id,
+        "joining_date": user.joining_date.isoformat() if user.joining_date else None,
+    }
 
-# Allowed file types for identity documents
-ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
-
-def validate_file(file: UploadFile) -> bool:
-    """Validate uploaded file type and size."""
-    if not file.filename:
-        return False
-    
-    file_ext = Path(file.filename).suffix.lower()
-    if file_ext not in ALLOWED_EXTENSIONS:
-        return False
-    
-    return True
-
-async def save_uploaded_file(file: UploadFile, user_id: int, document_type: str) -> str:
-    """Save uploaded file and return the file path."""
-    if not validate_file(file):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid file type. Only JPG, PNG, and PDF files are allowed."
-        )
-    
-    # Generate unique filename
-    file_ext = Path(file.filename).suffix.lower()
-    unique_filename = f"{user_id}_{document_type}_{uuid.uuid4()}{file_ext}"
-    file_path = UPLOAD_DIR / unique_filename
-    
-    # Read file content
-    content = await file.read()
-    
-    # Check file size
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="File size too large. Maximum size is 10MB."
-        )
-    
-    # Save file
-    with open(file_path, "wb") as buffer:
-        buffer.write(content)
-    
-    return str(file_path)
-
-@router.get("/profile", response_model=UserResponse)
+@router.get("/profile")
 async def get_profile(current_user: User = Depends(get_current_user)):
     """Get current user's profile."""
-    return current_user
+    return APIResponse.success(
+        data=user_to_dict(current_user),
+        message="Profile retrieved successfully"
+    )
 
-@router.put("/profile", response_model=UserResponse)
+@router.put("/profile")
 async def update_profile(
     user_update: UserUpdate,
     current_user: User = Depends(get_current_user),
@@ -82,7 +67,10 @@ async def update_profile(
     try:
         update_data = user_update.model_dump(exclude_unset=True)
         if not update_data:
-            return current_user
+            return APIResponse.success(
+                data=user_to_dict(current_user),
+                message="Profile retrieved successfully"
+            )
         
         # Update user fields
         for field, value in update_data.items():
@@ -92,16 +80,18 @@ async def update_profile(
         await db.refresh(current_user)
         
         log_info(f"User profile updated: {current_user.email}")
-        return current_user
+        return APIResponse.success(
+            data=user_to_dict(current_user),
+            message="Profile updated successfully"
+        )
         
+    except HTTPException:
+        raise
     except Exception as e:
         log_error(f"Profile update error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Profile update failed"
-        )
+        return APIResponse.internal_error(message="Profile update failed")
 
-@router.get("/", response_model=list[UserResponse])
+@router.get("/")
 async def list_users(
     offset: int = 0,
     limit: int = 10,
@@ -120,16 +110,19 @@ async def list_users(
                 .order_by(User.created_at.desc())
             )
             users = result.scalars().all()
-            return users
+            users_data = [user_to_dict(user) for user in users]
+            return APIResponse.success(
+                data=users_data,
+                message="Users retrieved successfully"
+            )
         
+    except HTTPException:
+        raise
     except Exception as e:
         log_error(f"List users error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch users"
-        )
+        return APIResponse.internal_error(message="Failed to fetch users")
 
-@router.get("/{user_id}", response_model=UserResponse)
+@router.get("/{user_id}")
 async def get_user(
     user_id: int,
     current_user: User = Depends(get_current_admin_user),
@@ -141,21 +134,20 @@ async def get_user(
         user = result.scalar_one_or_none()
         
         if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
+            return APIResponse.not_found(message="User not found", resource="user")
         
-        return user
+        return APIResponse.success(
+            data=user_to_dict(user),
+            message="User retrieved successfully"
+        )
         
+    except HTTPException:
+        raise
     except Exception as e:
         log_error(f"Get user error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch user"
-        )
+        return APIResponse.internal_error(message="Failed to fetch user")
 
-@router.post("/upload-profile-image", response_model=FileUploadResponse)
+@router.post("/upload-profile-image")
 async def upload_profile_image(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
@@ -163,7 +155,17 @@ async def upload_profile_image(
 ):
     """Upload profile image."""
     try:
-        file_path = await save_uploaded_file(file, current_user.id, "profile")
+        # Delete old file if exists
+        if current_user.profile_image:
+            await storage.delete_file(current_user.profile_image)
+        
+        # Upload new file using storage service
+        file_path = await storage.upload_file(file, current_user.id, "profile")
+        
+        # Read file size before updating
+        file.seek(0)
+        content = await file.read()
+        file_size = len(content)
         
         # Update user record (profile photos are auto-approved)
         current_user.profile_image = file_path
@@ -172,21 +174,27 @@ async def upload_profile_image(
         await db.refresh(current_user)
         
         log_info(f"Profile image uploaded for user: {current_user.email}")
-        return FileUploadResponse(
-            filename=file.filename,
-            file_path=file_path,
-            file_size=len(await file.read()),
-            content_type=file.content_type or "application/octet-stream"
+        
+        upload_data = {
+            "filename": file.filename,
+            "file_path": file_path,
+            "file_url": storage.get_file_url(file_path),
+            "file_size": file_size,
+            "content_type": file.content_type or "application/octet-stream"
+        }
+        
+        return APIResponse.success(
+            data=upload_data,
+            message="Profile image uploaded successfully"
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         log_error(f"Profile image upload error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to upload profile image"
-        )
+        return APIResponse.internal_error(message="Failed to upload profile image")
 
-@router.post("/upload-aadhaar-front", response_model=FileUploadResponse)
+@router.post("/upload-aadhaar-front")
 async def upload_aadhaar_front(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
@@ -194,7 +202,17 @@ async def upload_aadhaar_front(
 ):
     """Upload Aadhaar front image."""
     try:
-        file_path = await save_uploaded_file(file, current_user.id, "aadhaar_front")
+        # Delete old file if exists
+        if current_user.aadhaar_front:
+            await storage.delete_file(current_user.aadhaar_front)
+        
+        # Upload new file using storage service
+        file_path = await storage.upload_file(file, current_user.id, "aadhaar_front")
+        
+        # Read file size before updating
+        file.seek(0)
+        content = await file.read()
+        file_size = len(content)
         
         # Update user record
         current_user.aadhaar_front = file_path
@@ -203,21 +221,27 @@ async def upload_aadhaar_front(
         await db.refresh(current_user)
         
         log_info(f"Aadhaar front uploaded for user: {current_user.email}")
-        return FileUploadResponse(
-            filename=file.filename,
-            file_path=file_path,
-            file_size=len(await file.read()),
-            content_type=file.content_type or "application/octet-stream"
+        
+        upload_data = {
+            "filename": file.filename,
+            "file_path": file_path,
+            "file_url": storage.get_file_url(file_path),
+            "file_size": file_size,
+            "content_type": file.content_type or "application/octet-stream"
+        }
+        
+        return APIResponse.success(
+            data=upload_data,
+            message="Aadhaar front image uploaded successfully"
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         log_error(f"Aadhaar front upload error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to upload Aadhaar front"
-        )
+        return APIResponse.internal_error(message="Failed to upload Aadhaar front")
 
-@router.post("/upload-aadhaar-back", response_model=FileUploadResponse)
+@router.post("/upload-aadhaar-back")
 async def upload_aadhaar_back(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
@@ -225,7 +249,17 @@ async def upload_aadhaar_back(
 ):
     """Upload Aadhaar back image."""
     try:
-        file_path = await save_uploaded_file(file, current_user.id, "aadhaar_back")
+        # Delete old file if exists
+        if current_user.aadhaar_back:
+            await storage.delete_file(current_user.aadhaar_back)
+        
+        # Upload new file using storage service
+        file_path = await storage.upload_file(file, current_user.id, "aadhaar_back")
+        
+        # Read file size before updating
+        file.seek(0)
+        content = await file.read()
+        file_size = len(content)
         
         # Update user record
         current_user.aadhaar_back = file_path
@@ -234,21 +268,27 @@ async def upload_aadhaar_back(
         await db.refresh(current_user)
         
         log_info(f"Aadhaar back uploaded for user: {current_user.email}")
-        return FileUploadResponse(
-            filename=file.filename,
-            file_path=file_path,
-            file_size=len(await file.read()),
-            content_type=file.content_type or "application/octet-stream"
+        
+        upload_data = {
+            "filename": file.filename,
+            "file_path": file_path,
+            "file_url": storage.get_file_url(file_path),
+            "file_size": file_size,
+            "content_type": file.content_type or "application/octet-stream"
+        }
+        
+        return APIResponse.success(
+            data=upload_data,
+            message="Aadhaar back image uploaded successfully"
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         log_error(f"Aadhaar back upload error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to upload Aadhaar back"
-        )
+        return APIResponse.internal_error(message="Failed to upload Aadhaar back")
 
-@router.post("/upload-pan", response_model=FileUploadResponse)
+@router.post("/upload-pan")
 async def upload_pan(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
@@ -256,7 +296,17 @@ async def upload_pan(
 ):
     """Upload PAN image."""
     try:
-        file_path = await save_uploaded_file(file, current_user.id, "pan")
+        # Delete old file if exists
+        if current_user.pan_image:
+            await storage.delete_file(current_user.pan_image)
+        
+        # Upload new file using storage service
+        file_path = await storage.upload_file(file, current_user.id, "pan")
+        
+        # Read file size before updating
+        file.seek(0)
+        content = await file.read()
+        file_size = len(content)
         
         # Update user record
         current_user.pan_image = file_path
@@ -265,22 +315,28 @@ async def upload_pan(
         await db.refresh(current_user)
         
         log_info(f"PAN uploaded for user: {current_user.email}")
-        return FileUploadResponse(
-            filename=file.filename,
-            file_path=file_path,
-            file_size=len(await file.read()),
-            content_type=file.content_type or "application/octet-stream"
+        
+        upload_data = {
+            "filename": file.filename,
+            "file_path": file_path,
+            "file_url": storage.get_file_url(file_path),
+            "file_size": file_size,
+            "content_type": file.content_type or "application/octet-stream"
+        }
+        
+        return APIResponse.success(
+            data=upload_data,
+            message="PAN image uploaded successfully"
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         log_error(f"PAN upload error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to upload PAN"
-        )
+        return APIResponse.internal_error(message="Failed to upload PAN")
 
 # Employee Management Endpoints for Users (now merged into User)
-@router.get("/my-employee-details", response_model=Optional[UserResponse])
+@router.get("/my-employee-details")
 async def get_my_employee_details(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
@@ -292,18 +348,18 @@ async def get_my_employee_details(
             log_info(f"Inactive user {current_user.email} accessed their employee details (read-only)")
 
         log_info(f"User {current_user.email} (ID: {current_user.id}) accessing employee details (via merged User)")
-        return current_user
+        return APIResponse.success(
+            data=user_to_dict(current_user),
+            message="Employee details retrieved successfully"
+        )
         
     except HTTPException:
         raise
     except Exception as e:
         log_error(f"Get my employee details error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch employee details"
-        )
+        return APIResponse.internal_error(message="Failed to fetch employee details")
 
-@router.get("/my-employment-history", response_model=List[EmploymentHistoryResponse])
+@router.get("/my-employment-history")
 async def get_my_employment_history(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
@@ -322,20 +378,36 @@ async def get_my_employment_history(
         )
         history = result.scalars().all()
         
+        # Convert to dict
+        history_data = [
+            {
+                "id": h.id,
+                "user_id": h.user_id,
+                "company_name": h.company_name,
+                "position": h.position,
+                "start_date": h.start_date.isoformat() if h.start_date else None,
+                "end_date": h.end_date.isoformat() if h.end_date else None,
+                "is_current": h.is_current,
+                "manager_id": h.manager_id,
+                "created_at": h.created_at.isoformat() if h.created_at else None,
+            }
+            for h in history
+        ]
+        
         # Log access for audit
         log_info(f"User {current_user.email} accessed their employment history")
-        return history
+        return APIResponse.success(
+            data=history_data,
+            message="Employment history retrieved successfully"
+        )
         
     except HTTPException:
         raise
     except Exception as e:
         log_error(f"Get my employment history error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch employment history"
-        )
+        return APIResponse.internal_error(message="Failed to fetch employment history")
 
-@router.get("/my-employee-summary", response_model=EmployeeSummary)
+@router.get("/my-employee-summary")
 async def get_my_employee_summary(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
@@ -369,23 +441,32 @@ async def get_my_employee_summary(
         # Log access for audit
         log_info(f"User {current_user.email} accessed their employee summary")
         
-        return EmployeeSummary(
-            user=current_user,
-            employee_details=employee_details,
-            current_position=current_position,
-            recent_tracking=[],
-            total_work_days=total_work_days,
-            average_hours_per_day=average_hours_per_day
+        summary_data = {
+            "user": user_to_dict(current_user),
+            "employee_details": user_to_dict(employee_details),
+            "current_position": {
+                "id": current_position.id,
+                "company_name": current_position.company_name,
+                "position": current_position.position,
+                "start_date": current_position.start_date.isoformat() if current_position.start_date else None,
+                "end_date": current_position.end_date.isoformat() if current_position.end_date else None,
+                "is_current": current_position.is_current,
+            } if current_position else None,
+            "recent_tracking": [],
+            "total_work_days": total_work_days,
+            "average_hours_per_day": average_hours_per_day
+        }
+        
+        return APIResponse.success(
+            data=summary_data,
+            message="Employee summary retrieved successfully"
         )
         
     except HTTPException:
         raise
     except Exception as e:
         log_error(f"Get my employee summary error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch employee summary"
-        )
+        return APIResponse.internal_error(message="Failed to fetch employee summary")
 
 
 @router.get("/my-department-colleagues")
@@ -398,7 +479,10 @@ async def get_my_department_colleagues(
         # Get current user's department
         # Department from merged User
         if not current_user.department:
-            return {"colleagues": [], "department": None}
+            return APIResponse.success(
+                data={"colleagues": [], "department": None},
+                message="No department assigned"
+            )
         
         # Get colleagues from same department
         colleagues_result = await db.execute(
@@ -413,7 +497,7 @@ async def get_my_department_colleagues(
         )
         colleagues = colleagues_result.scalars().all()
         
-        return {
+        colleagues_data = {
             "department": current_user.department,
             "colleagues": [
                 {
@@ -421,18 +505,21 @@ async def get_my_department_colleagues(
                     "name": colleague.name,
                     "email": colleague.email,
                     "designation": colleague.designation,
-                    # merged details are on the user itself
                 }
                 for colleague in colleagues
             ]
         }
         
+        return APIResponse.success(
+            data=colleagues_data,
+            message="Department colleagues retrieved successfully"
+        )
+        
+    except HTTPException:
+        raise
     except Exception as e:
         log_error(f"Get department colleagues error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch department colleagues"
-        )
+        return APIResponse.internal_error(message="Failed to fetch department colleagues")
 
 @router.get("/my-manager")
 async def get_my_manager(
@@ -443,7 +530,10 @@ async def get_my_manager(
     try:
         # With merged model, manager_id is on User
         if not current_user.manager_id:
-            return {"manager": None}
+            return APIResponse.success(
+                data={"manager": None},
+                message="No manager assigned"
+            )
         
         # Get manager details
         manager_result = await db.execute(
@@ -452,9 +542,12 @@ async def get_my_manager(
         manager = manager_result.scalar_one_or_none()
         
         if not manager:
-            return {"manager": None}
+            return APIResponse.success(
+                data={"manager": None},
+                message="Manager not found"
+            )
         
-        return {
+        manager_data = {
             "manager": {
                 "id": manager.id,
                 "name": manager.name,
@@ -464,9 +557,13 @@ async def get_my_manager(
             }
         }
         
+        return APIResponse.success(
+            data=manager_data,
+            message="Manager information retrieved successfully"
+        )
+        
+    except HTTPException:
+        raise
     except Exception as e:
         log_error(f"Get my manager error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch manager information"
-        )
+        return APIResponse.internal_error(message="Failed to fetch manager information")
