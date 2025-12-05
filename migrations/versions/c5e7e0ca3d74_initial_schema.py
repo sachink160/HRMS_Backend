@@ -1,8 +1,8 @@
-"""Initial migration
+"""initial schema
 
-Revision ID: a42252748cb2
+Revision ID: c5e7e0ca3d74
 Revises: 
-Create Date: 2025-11-10 11:24:13.963684
+Create Date: 2025-12-05 12:49:20.330618
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'a42252748cb2'
+revision: str = 'c5e7e0ca3d74'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -227,6 +227,26 @@ def upgrade() -> None:
     op.create_index('idx_leave_user_id', 'leaves', ['user_id'], unique=False)
     op.create_index('idx_leave_user_status', 'leaves', ['user_id', 'status'], unique=False)
     op.create_index(op.f('ix_leaves_id'), 'leaves', ['id'], unique=False)
+    op.create_table('logs',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('log_type', sa.Enum('ERROR', 'SUCCESS', name='logtype'), nullable=False),
+    sa.Column('message', sa.Text(), nullable=False),
+    sa.Column('module', sa.String(), nullable=True),
+    sa.Column('user_id', sa.Integer(), nullable=True),
+    sa.Column('error_details', sa.Text(), nullable=True),
+    sa.Column('request_path', sa.String(), nullable=True),
+    sa.Column('request_method', sa.String(), nullable=True),
+    sa.Column('ip_address', sa.String(), nullable=True),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index('idx_log_created_at', 'logs', ['created_at'], unique=False)
+    op.create_index('idx_log_module', 'logs', ['module'], unique=False)
+    op.create_index('idx_log_type', 'logs', ['log_type'], unique=False)
+    op.create_index('idx_log_type_created', 'logs', ['log_type', 'created_at'], unique=False)
+    op.create_index('idx_log_user_id', 'logs', ['user_id'], unique=False)
+    op.create_index(op.f('ix_logs_id'), 'logs', ['id'], unique=False)
     op.create_table('tasks',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('user_id', sa.Integer(), nullable=False),
@@ -269,6 +289,13 @@ def downgrade() -> None:
     op.drop_index('idx_task_category', table_name='tasks')
     op.drop_index('idx_task_active', table_name='tasks')
     op.drop_table('tasks')
+    op.drop_index(op.f('ix_logs_id'), table_name='logs')
+    op.drop_index('idx_log_user_id', table_name='logs')
+    op.drop_index('idx_log_type_created', table_name='logs')
+    op.drop_index('idx_log_type', table_name='logs')
+    op.drop_index('idx_log_module', table_name='logs')
+    op.drop_index('idx_log_created_at', table_name='logs')
+    op.drop_table('logs')
     op.drop_index(op.f('ix_leaves_id'), table_name='leaves')
     op.drop_index('idx_leave_user_status', table_name='leaves')
     op.drop_index('idx_leave_user_id', table_name='leaves')

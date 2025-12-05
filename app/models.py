@@ -346,6 +346,49 @@ class LogType(str, enum.Enum):
     ERROR = "error"
     SUCCESS = "success"
 
+class TrackerStatus(str, enum.Enum):
+    ACTIVE = "active"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+
+class TimeTracker(Base):
+    __tablename__ = "time_trackers"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    
+    # Date and time tracking
+    date = Column(Date, nullable=False)  # Date of the tracking session
+    clock_in = Column(DateTime(timezone=True), nullable=False)  # When user clocked in
+    clock_out = Column(DateTime(timezone=True), nullable=True)  # When user clocked out
+    
+    # Status tracking
+    status = Column(Enum(TrackerStatus), default=TrackerStatus.ACTIVE, nullable=False)
+    
+    # Pause periods stored as JSON array: [{"pause_start": "...", "pause_end": "..."}, ...]
+    pause_periods = Column(Text, nullable=True)  # JSON string of pause periods
+    
+    # Calculated totals (in seconds)
+    total_work_seconds = Column(Integer, nullable=True, default=0)  # Total worked time excluding pauses
+    total_pause_seconds = Column(Integer, nullable=True, default=0)  # Total paused time
+    
+    # System timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships
+    user = relationship("User", backref="time_trackers")
+    
+    # Database indexes for performance optimization
+    __table_args__ = (
+        Index('idx_tracker_user_id', 'user_id'),
+        Index('idx_tracker_date', 'date'),
+        Index('idx_tracker_status', 'status'),
+        Index('idx_tracker_user_date', 'user_id', 'date'),
+        Index('idx_tracker_user_status', 'user_id', 'status'),
+        Index('idx_tracker_created_at', 'created_at'),
+    )
+
 class Log(Base):
     __tablename__ = "logs"
     

@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import create_async_engine
 from app.database import engine
 from app.models import Base
-from app.routes import auth, users, leaves, holidays, admin, email, employees, tasks
+from app.routes import auth, users, leaves, holidays, admin, email, employees, tasks, tracker
 from app.logger import log_info, log_error
 from app.exceptions import (
     http_exception_handler,
@@ -62,6 +62,7 @@ app.include_router(admin.router)
 app.include_router(email.router)
 app.include_router(employees.router)
 app.include_router(tasks.router)
+app.include_router(tracker.router)
 
 # Mount static files for uploaded documents (only for local storage)
 # For S3 storage, files are served directly from S3 URLs

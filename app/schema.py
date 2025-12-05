@@ -106,6 +106,18 @@ class AdminUserUpdate(BaseModel):
             )
         return v
 
+class PasswordChange(BaseModel):
+    """Schema for password change request."""
+    current_password: str
+    new_password: str
+    
+    @field_validator('new_password')
+    @classmethod
+    def validate_new_password(cls, v):
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters long')
+        return v
+
 class UserResponse(UserBase):
     id: int
     role: UserRole
@@ -626,23 +638,53 @@ class HolidayResponse(HolidayBase):
         from_attributes = True
 
 # Tracker Schemas
+class PausePeriod(BaseModel):
+    pause_start: datetime
+    pause_end: Optional[datetime] = None
+
 class TrackerBase(BaseModel):
-    check_in: Optional[datetime] = None
-    check_out: Optional[datetime] = None
-    date: datetime
+    date: Optional[date] = None
+    clock_in: Optional[datetime] = None
+    clock_out: Optional[datetime] = None
 
-class TrackerCreate(TrackerBase):
-    pass
+class TrackerCreate(BaseModel):
+    pass  # Clock in/out handled by endpoints
 
-class TrackerResponse(TrackerBase):
+class TrackerResponse(BaseModel):
     id: int
     user_id: int
+    date: date
+    clock_in: datetime
+    clock_out: Optional[datetime] = None
+    status: str
+    pause_periods: Optional[List[PausePeriod]] = None
+    total_work_seconds: Optional[int] = None
+    total_pause_seconds: Optional[int] = None
+    total_work_hours: Optional[float] = None  # Calculated field
     created_at: datetime
     updated_at: Optional[datetime] = None
     user: Optional[UserResponse] = None
     
     class Config:
         from_attributes = True
+
+class TrackerCurrentResponse(BaseModel):
+    """Response for current active/paused session"""
+    has_active_session: bool
+    tracker: Optional[TrackerResponse] = None
+    current_work_seconds: Optional[int] = None  # Current elapsed time excluding pauses
+    current_pause_seconds: Optional[int] = None  # Current paused time if paused
+
+class TrackerSummaryResponse(BaseModel):
+    """Summary for admin reports"""
+    user_id: int
+    user_name: str
+    user_email: str
+    date: date
+    clock_in: Optional[datetime] = None
+    clock_out: Optional[datetime] = None
+    total_work_hours: float
+    status: str
 
 # File Upload Schemas
 class FileUploadResponse(BaseModel):

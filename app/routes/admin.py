@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, text, update
 from fastapi import UploadFile, File
@@ -6,9 +6,10 @@ from pathlib import Path
 import uuid
 from sqlalchemy.orm import selectinload
 from datetime import datetime, date
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+import json
 from app.database import get_db
-from app.models import User, Leave, Holiday, LeaveStatus, UserRole, DocumentStatus, EmploymentHistory
+from app.models import User, Leave, Holiday, LeaveStatus, UserRole, DocumentStatus, EmploymentHistory, TimeTracker, TrackerStatus
 from app.schema import (
     UserResponse, LeaveResponse, HolidayResponse, TrackerResponse, UserCreate,
     EmploymentHistoryResponse, EmployeeSummary, EnhancedTrackerResponse,
@@ -16,6 +17,7 @@ from app.schema import (
 )
 from app.auth import get_current_admin_user, get_password_hash
 from app.logger import log_info, log_error
+from app.response import APIResponse
 from app.storage import storage
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -1940,3 +1942,237 @@ async def get_enhanced_dashboard_stats(
             "departments": [],
             "recent_activity": []
         }
+
+# Helper functions for tracker (duplicated from tracker.py to avoid circular imports)
+def parse_pause_periods(pause_periods_json: Optional[str]) -> List[dict]:
+    """Parse pause periods JSON string to list of dicts."""
+    if not pause_periods_json:
+        return []
+    try:
+        return json.loads(pause_periods_json)
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+def tracker_to_dict(tracker: TimeTracker, include_user: bool = False) -> dict:
+    """Convert TimeTracker model to dictionary for response."""
+    pause_periods = parse_pause_periods(tracker.pause_periods)
+    
+    # Calculate work hours
+    total_work_hours = None
+    if tracker.total_work_seconds is not None:
+        total_work_hours = round(tracker.total_work_seconds / 3600, 2)
+    
+    result = {
+        "id": tracker.id,
+        "user_id": tracker.user_id,
+        "date": tracker.date.isoformat() if tracker.date else None,
+        "clock_in": tracker.clock_in.isoformat() if tracker.clock_in else None,
+        "clock_out": tracker.clock_out.isoformat() if tracker.clock_out else None,
+        "status": tracker.status.value if hasattr(tracker.status, 'value') else str(tracker.status),
+        "pause_periods": pause_periods,
+        "total_work_seconds": tracker.total_work_seconds,
+        "total_pause_seconds": tracker.total_pause_seconds,
+        "total_work_hours": total_work_hours,
+        "created_at": tracker.created_at.isoformat() if tracker.created_at else None,
+        "updated_at": tracker.updated_at.isoformat() if tracker.updated_at else None,
+    }
+    
+    if include_user and tracker.user:
+        result["user"] = {
+            "id": tracker.user.id,
+            "name": tracker.user.name,
+            "email": tracker.user.email,
+            "designation": tracker.user.designation,
+        }
+    
+    return result
+
+# Admin Tracker Endpoints
+
+@router.get("/tracker/all")
+async def get_all_trackers(
+    user_id: Optional[int] = Query(None, description="Filter by user ID"),
+    start_date: Optional[date] = Query(None, description="Start date filter"),
+    end_date: Optional[date] = Query(None, description="End date filter"),
+    status_filter: Optional[str] = Query(None, description="Status filter"),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100),
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get all employees' tracking data (admin only)."""
+    try:
+        query = select(TimeTracker).options(selectinload(TimeTracker.user))
+        
+        # Apply filters
+        if user_id:
+            query = query.where(TimeTracker.user_id == user_id)
+        if start_date:
+            query = query.where(TimeTracker.date >= start_date)
+        if end_date:
+            query = query.where(TimeTracker.date <= end_date)
+        if status_filter:
+            try:
+                status_enum = TrackerStatus(status_filter.lower())
+                query = query.where(TimeTracker.status == status_enum)
+            except ValueError:
+                pass
+        
+        # Get total count
+        count_query = select(func.count()).select_from(query.subquery())
+        total_result = await db.execute(count_query)
+        total = total_result.scalar()
+        
+        # Apply pagination and ordering
+        query = query.order_by(TimeTracker.date.desc(), TimeTracker.created_at.desc())
+        query = query.offset(offset).limit(limit)
+        
+        result = await db.execute(query)
+        trackers = result.scalars().all()
+        
+        trackers_data = [tracker_to_dict(tracker, include_user=True) for tracker in trackers]
+        
+        return APIResponse.success(
+            data={
+                "items": trackers_data,
+                "total": total,
+                "offset": offset,
+                "limit": limit
+            },
+            message="All tracking data retrieved successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Get all trackers error: {str(e)}")
+        return APIResponse.internal_error(message="Failed to fetch tracking data")
+
+@router.get("/tracker/employee/{user_id}")
+async def get_employee_trackers(
+    user_id: int,
+    start_date: Optional[date] = Query(None, description="Start date filter"),
+    end_date: Optional[date] = Query(None, description="End date filter"),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100),
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get specific employee's tracking data (admin only)."""
+    try:
+        # Verify user exists
+        user_result = await db.execute(select(User).where(User.id == user_id))
+        user = user_result.scalar_one_or_none()
+        
+        if not user:
+            return APIResponse.not_found(message="User not found", resource="user")
+        
+        query = select(TimeTracker).where(TimeTracker.user_id == user_id)
+        
+        # Apply filters
+        if start_date:
+            query = query.where(TimeTracker.date >= start_date)
+        if end_date:
+            query = query.where(TimeTracker.date <= end_date)
+        
+        # Get total count
+        count_query = select(func.count()).select_from(query.subquery())
+        total_result = await db.execute(count_query)
+        total = total_result.scalar()
+        
+        # Apply pagination and ordering
+        query = query.order_by(TimeTracker.date.desc(), TimeTracker.created_at.desc())
+        query = query.offset(offset).limit(limit)
+        
+        result = await db.execute(query)
+        trackers = result.scalars().all()
+        
+        trackers_data = [tracker_to_dict(tracker) for tracker in trackers]
+        
+        return APIResponse.success(
+            data={
+                "user": {
+                    "id": user.id,
+                    "name": user.name,
+                    "email": user.email,
+                    "designation": user.designation
+                },
+                "items": trackers_data,
+                "total": total,
+                "offset": offset,
+                "limit": limit
+            },
+            message=f"Tracking data for {user.name} retrieved successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Get employee trackers error: {str(e)}")
+        return APIResponse.internal_error(message="Failed to fetch employee tracking data")
+
+@router.get("/tracker/summary")
+async def get_tracker_summary(
+    start_date: Optional[date] = Query(None, description="Start date filter"),
+    end_date: Optional[date] = Query(None, description="End date filter"),
+    user_id: Optional[int] = Query(None, description="Filter by user ID"),
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get aggregated tracking summary (admin only)."""
+    try:
+        query = select(
+            TimeTracker.user_id,
+            TimeTracker.date,
+            func.sum(TimeTracker.total_work_seconds).label('total_work_seconds'),
+            func.max(TimeTracker.clock_in).label('clock_in'),
+            func.max(TimeTracker.clock_out).label('clock_out'),
+            func.max(TimeTracker.status).label('status')
+        ).group_by(TimeTracker.user_id, TimeTracker.date)
+        
+        # Apply filters
+        if user_id:
+            query = query.where(TimeTracker.user_id == user_id)
+        if start_date:
+            query = query.where(TimeTracker.date >= start_date)
+        if end_date:
+            query = query.where(TimeTracker.date <= end_date)
+        
+        query = query.order_by(TimeTracker.date.desc(), TimeTracker.user_id)
+        
+        result = await db.execute(query)
+        rows = result.all()
+        
+        # Get user details
+        user_ids = list(set(row.user_id for row in rows))
+        users_result = await db.execute(
+            select(User).where(User.id.in_(user_ids))
+        )
+        users = {user.id: user for user in users_result.scalars().all()}
+        
+        summary_data = []
+        for row in rows:
+            user = users.get(row.user_id)
+            if user:
+                total_hours = round((row.total_work_seconds or 0) / 3600, 2)
+                summary_data.append({
+                    "user_id": row.user_id,
+                    "user_name": user.name,
+                    "user_email": user.email,
+                    "date": row.date.isoformat() if row.date else None,
+                    "clock_in": row.clock_in.isoformat() if row.clock_in else None,
+                    "clock_out": row.clock_out.isoformat() if row.clock_out else None,
+                    "total_work_hours": total_hours,
+                    "status": str(row.status) if row.status else None
+                })
+        
+        return APIResponse.success(
+            data=summary_data,
+            message="Tracking summary retrieved successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Get tracker summary error: {str(e)}")
+        return APIResponse.internal_error(message="Failed to fetch tracking summary")

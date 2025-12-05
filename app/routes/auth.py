@@ -4,10 +4,11 @@ from sqlalchemy import select
 from datetime import timedelta
 from app.database import get_db
 from app.models import User
-from app.schema import UserCreate, UserResponse, UserLogin, UserUpdate, AdminCreateWithSecret
+from app.schema import UserCreate, UserResponse, UserLogin, UserUpdate, AdminCreateWithSecret, PasswordChange
 from app.models import UserRole
 from app.auth import (
     get_password_hash, 
+    verify_password,
     authenticate_user, 
     create_access_token, 
     get_current_user,
@@ -207,6 +208,40 @@ async def update_profile(
     except Exception as e:
         log_error(f"Profile update error: {str(e)}")
         return APIResponse.internal_error(message="Profile update failed")
+
+@router.post("/change-password")
+async def change_password(
+    password_data: PasswordChange,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Change password for current user (works for both employees and admins)."""
+    try:
+        # Verify current password
+        if not verify_password(password_data.current_password, current_user.hashed_password):
+            return APIResponse.bad_request(message="Current password is incorrect")
+        
+        # Check if new password is different from current password
+        if verify_password(password_data.new_password, current_user.hashed_password):
+            return APIResponse.bad_request(message="New password must be different from current password")
+        
+        # Update password
+        current_user.hashed_password = get_password_hash(password_data.new_password)
+        await db.commit()
+        await db.refresh(current_user)
+        
+        log_info(f"Password changed for user: {current_user.email}")
+        
+        return APIResponse.success(
+            data={"message": "Password changed successfully"},
+            message="Password changed successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Password change error: {str(e)}")
+        return APIResponse.internal_error(message="Password change failed")
 
 @router.post("/register-admin")
 async def register_admin(
