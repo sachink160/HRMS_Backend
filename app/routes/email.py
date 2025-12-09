@@ -137,7 +137,10 @@ async def test_email_connection(
 ):
     """Test email connection with current settings."""
     try:
-        await fastapi_email_service.load_settings(db)
+        loaded = await fastapi_email_service.load_settings(db)
+        if not loaded:
+            return {"success": False, "message": "Email settings are not configured"}
+
         success = await fastapi_email_service.test_connection()
         
         return {
@@ -277,7 +280,13 @@ async def send_email(
 ):
     """Send a single email."""
     try:
-        await fastapi_email_service.load_settings(db)
+        loaded = await fastapi_email_service.load_settings(db)
+        
+        if not loaded:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email settings are not configured"
+            )
         
         success = await fastapi_email_service.send_email(
             db=db,
@@ -308,7 +317,13 @@ async def send_bulk_emails(
 ):
     """Send emails to multiple recipients."""
     try:
-        await fastapi_email_service.load_settings(db)
+        loaded = await fastapi_email_service.load_settings(db)
+        
+        if not loaded:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email settings are not configured"
+            )
         
         results = await fastapi_email_service.send_bulk_emails(
             db=db,

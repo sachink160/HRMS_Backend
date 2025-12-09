@@ -15,6 +15,7 @@ from app.exceptions import (
 )
 from app.response import APIResponse
 from app.storage import STORAGE_TYPE
+from app.scheduler import start_scheduler, shutdown_scheduler
 import os
 
 @asynccontextmanager
@@ -26,10 +27,14 @@ async def lifespan(app: FastAPI):
     # Run: python run_alembic_migration.py upgrade head
     # to ensure database is up to date
     
+    # Start scheduler for automated tasks
+    start_scheduler()
+    
     yield
     
     # Shutdown
     log_info("Shutting down HRMS Backend Application")
+    shutdown_scheduler()
 
 # Create FastAPI app
 app = FastAPI(

@@ -24,11 +24,18 @@ class FastAPIEmailService:
     async def load_settings(self, db: AsyncSession) -> bool:
         """Load email settings and initialize fastapi-mail"""
         try:
-            await email_config.load_settings(db)
+            loaded = await email_config.load_settings(db)
+            if not loaded:
+                self.fastmail = None
+                self.settings = None
+                log_error("No email settings configured")
+                return False
+
             self.settings = email_config.get_settings()
             config = email_config.get_config()
             
             if not config or not self.settings:
+                self.fastmail = None
                 log_error("No email settings configured")
                 return False
             

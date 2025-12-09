@@ -126,6 +126,23 @@ async def login(login_data: UserLogin, db: AsyncSession = Depends(get_db)):
         log_error(f"Login error: {str(e)}")
         return APIResponse.internal_error(message="Login failed")
 
+@router.post("/logout")
+async def logout(current_user: User = Depends(get_current_user)):
+    """Logout current user."""
+    try:
+        log_info(f"User logged out: {current_user.email}")
+        
+        return APIResponse.success(
+            data={"message": "Logged out successfully"},
+            message="Logged out successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Logout error: {str(e)}")
+        return APIResponse.internal_error(message="Logout failed")
+
 @router.get("/me")
 async def read_users_me(current_user: User = Depends(get_current_user)):
     """Get current user information."""

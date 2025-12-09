@@ -397,8 +397,6 @@ async def get_my_history(
     start_date: Optional[date] = Query(None, description="Start date filter"),
     end_date: Optional[date] = Query(None, description="End date filter"),
     status_filter: Optional[str] = Query(None, description="Status filter: active, paused, completed"),
-    offset: int = Query(0, ge=0),
-    limit: int = Query(10, ge=1, le=100),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -423,9 +421,8 @@ async def get_my_history(
         total_result = await db.execute(count_query)
         total = total_result.scalar()
         
-        # Apply pagination and ordering
+        # Apply ordering
         query = query.order_by(TimeTracker.date.desc(), TimeTracker.created_at.desc())
-        query = query.offset(offset).limit(limit)
         
         result = await db.execute(query)
         trackers = result.scalars().all()
@@ -435,9 +432,7 @@ async def get_my_history(
         return APIResponse.success(
             data={
                 "items": trackers_data,
-                "total": total,
-                "offset": offset,
-                "limit": limit
+                "total": total
             },
             message="Tracking history retrieved successfully"
         )
