@@ -5,7 +5,7 @@ from fastapi import UploadFile, File
 from pathlib import Path
 import uuid
 from sqlalchemy.orm import selectinload
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import List, Dict, Any, Optional
 import json
 from app.database import get_db
@@ -2110,6 +2110,167 @@ async def get_employee_trackers(
     except Exception as e:
         log_error(f"Get employee trackers error: {str(e)}")
         return APIResponse.internal_error(message="Failed to fetch employee tracking data")
+
+def format_duration(seconds: int) -> str:
+    """Format duration in seconds to human-readable string."""
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    secs = seconds % 60
+    
+    parts = []
+    if hours > 0:
+        parts.append(f"{hours}h")
+    if minutes > 0:
+        parts.append(f"{minutes}m")
+    if secs > 0 or not parts:
+        parts.append(f"{secs}s")
+    
+    return " ".join(parts)
+
+@router.get("/tracker/{tracker_id}/timeline")
+async def get_tracker_timeline(
+    tracker_id: int,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get detailed timeline information for a specific tracker record with break periods."""
+    try:
+        result = await db.execute(
+            select(TimeTracker)
+            .options(selectinload(TimeTracker.user))
+            .where(TimeTracker.id == tracker_id)
+        )
+        tracker = result.scalar_one_or_none()
+        
+        if not tracker:
+            return APIResponse.not_found(message="Tracker record not found", resource="tracker")
+        
+        pause_periods = parse_pause_periods(tracker.pause_periods)
+        now = datetime.now(timezone.utc) if tracker.status in [TrackerStatus.ACTIVE, TrackerStatus.PAUSED] else None
+        
+        # Build timeline segments
+        timeline_segments = []
+        
+        if not tracker.clock_in:
+            return APIResponse.bad_request(message="Invalid tracker: missing clock_in time")
+        
+        clock_in = tracker.clock_in
+        clock_out = tracker.clock_out or now
+        
+        if not clock_out:
+            clock_out = now or datetime.now(timezone.utc)
+        
+        # Sort pause periods by start time
+        sorted_pauses = sorted(
+            [p for p in pause_periods if p.get('pause_start')],
+            key=lambda x: x.get('pause_start', '')
+        )
+        
+        current_time = clock_in
+        
+        # Create timeline segments (work periods and break periods)
+        for pause in sorted_pauses:
+            pause_start_str = pause.get('pause_start')
+            pause_end_str = pause.get('pause_end')
+            
+            if not pause_start_str:
+                continue
+            
+            pause_start = datetime.fromisoformat(pause_start_str.replace('Z', '+00:00')) if isinstance(pause_start_str, str) else pause_start_str
+            
+            # Add work period before this pause
+            if current_time < pause_start:
+                work_duration = (pause_start - current_time).total_seconds()
+                timeline_segments.append({
+                    "type": "work",
+                    "start": current_time.isoformat(),
+                    "end": pause_start.isoformat(),
+                    "duration_seconds": int(work_duration),
+                    "duration_formatted": format_duration(int(work_duration))
+                })
+            
+            # Add break period
+            pause_end = None
+            is_active_break = False
+            
+            if pause_end_str:
+                pause_end = datetime.fromisoformat(pause_end_str.replace('Z', '+00:00')) if isinstance(pause_end_str, str) else pause_end_str
+            else:
+                # No pause_end means it's an active break
+                is_active_break = True
+                # For active breaks, we don't set pause_end - let frontend calculate real-time
+            
+            if pause_end:
+                # Closed break period
+                break_duration = (pause_end - pause_start).total_seconds()
+                timeline_segments.append({
+                    "type": "break",
+                    "start": pause_start.isoformat(),
+                    "end": pause_end.isoformat(),
+                    "duration_seconds": int(break_duration),
+                    "duration_formatted": format_duration(int(break_duration))
+                })
+                current_time = pause_end
+            else:
+                # Open break (currently on break) - calculate initial duration but mark as active
+                break_duration = (now - pause_start).total_seconds() if now else 0
+                timeline_segments.append({
+                    "type": "break",
+                    "start": pause_start.isoformat(),
+                    "end": None,
+                    "duration_seconds": int(break_duration) if now else None,
+                    "duration_formatted": format_duration(int(break_duration)) if now else "Ongoing",
+                    "is_active": True
+                })
+                # Don't update current_time for active breaks - it's still ongoing
+                current_time = pause_start
+        
+        # Add final work period after last pause
+        if current_time < clock_out:
+            work_duration = (clock_out - current_time).total_seconds()
+            timeline_segments.append({
+                "type": "work",
+                "start": current_time.isoformat(),
+                "end": clock_out.isoformat(),
+                "duration_seconds": int(work_duration),
+                "duration_formatted": format_duration(int(work_duration))
+            })
+        
+        # If no pauses, add single work period
+        if not sorted_pauses:
+            work_duration = (clock_out - clock_in).total_seconds()
+            timeline_segments.append({
+                "type": "work",
+                "start": clock_in.isoformat(),
+                "end": clock_out.isoformat(),
+                "duration_seconds": int(work_duration),
+                "duration_formatted": format_duration(int(work_duration))
+            })
+        
+        # Calculate total duration for timeline
+        total_duration = (clock_out - clock_in).total_seconds()
+        
+        return APIResponse.success(
+            data={
+                "tracker": tracker_to_dict(tracker, include_user=True),
+                "timeline": {
+                    "clock_in": clock_in.isoformat(),
+                    "clock_out": clock_out.isoformat() if tracker.clock_out else None,
+                    "total_duration_seconds": int(total_duration),
+                    "total_duration_formatted": format_duration(int(total_duration)),
+                    "segments": timeline_segments,
+                    "total_work_seconds": tracker.total_work_seconds or 0,
+                    "total_pause_seconds": tracker.total_pause_seconds or 0,
+                }
+            },
+            message="Tracker timeline retrieved successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Get tracker timeline error: {str(e)}")
+        return APIResponse.internal_error(message="Failed to fetch tracker timeline")
 
 @router.get("/tracker/summary")
 async def get_tracker_summary(
