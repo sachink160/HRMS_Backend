@@ -24,22 +24,22 @@ class User(Base):
     __tablename__ = "users"
     
     id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, unique=True, index=True, nullable=False)
-    hashed_password = Column(String, nullable=False)
-    name = Column(String, nullable=False)
-    phone = Column(String, nullable=True)
-    designation = Column(String, nullable=True)  # Employee designation/position
+    email = Column(String(255), unique=True, index=True, nullable=False)
+    hashed_password = Column(String(255), nullable=False)
+    name = Column(String(255), nullable=False)
+    phone = Column(String(50), nullable=True)
+    designation = Column(String(255), nullable=True)  # Employee designation/position
     joining_date = Column(Date, nullable=True)  # Employee joining date
     # External systems linkage
-    wifi_user_id = Column(String, nullable=True, index=True)  # Optional WiFi portal user identifier
+    wifi_user_id = Column(String(255), nullable=True, index=True)  # Optional WiFi portal user identifier
     role = Column(Enum(UserRole), default=UserRole.USER, nullable=False)
     is_active = Column(Boolean, default=True)
     
     # Identity document fields
-    profile_image = Column(String, nullable=True)  # Profile image file path
-    aadhaar_front = Column(String, nullable=True)  # Aadhaar front image file path
-    aadhaar_back = Column(String, nullable=True)  # Aadhaar back image file path
-    pan_image = Column(String, nullable=True)  # PAN image file path
+    profile_image = Column(String(255), nullable=True)  # Profile image file path
+    aadhaar_front = Column(String(255), nullable=True)  # Aadhaar front image file path
+    aadhaar_back = Column(String(255), nullable=True)  # Aadhaar back image file path
+    pan_image = Column(String(255), nullable=True)  # PAN image file path
     
     # Identity document statuses
     profile_image_status = Column(Enum(DocumentStatus), default=DocumentStatus.PENDING, nullable=True)
@@ -49,72 +49,72 @@ class User(Base):
 
     # BEGIN merged EmployeeDetails fields
     # Personal Information
-    employee_id = Column(String, nullable=True, unique=True, index=True)  # Company employee ID
+    employee_id = Column(String(255), nullable=True, unique=True, index=True)  # Company employee ID
     date_of_birth = Column(Date, nullable=True)
-    gender = Column(String, nullable=True)
-    marital_status = Column(String, nullable=True)
-    nationality = Column(String, nullable=True)
+    gender = Column(String(50), nullable=True)
+    marital_status = Column(String(50), nullable=True)
+    nationality = Column(String(100), nullable=True)
     
     # Contact Information
-    personal_email = Column(String, nullable=True)
-    company_email = Column(String, nullable=True, index=True)  # Company email address
-    company_email_password = Column(String, nullable=True)  # Company email password (should be encrypted in production)
+    personal_email = Column(String(255), nullable=True)
+    company_email = Column(String(255), nullable=True, index=True)  # Company email address
+    company_email_password = Column(String(255), nullable=True)  # Company email password (should be encrypted in production)
     # IT Assets & Credentials
     hardware_allocation = Column(Text, nullable=True)  # Details of allocated hardware (e.g., laptop, accessories)
-    system_password = Column(String, nullable=True)  # System password (should be encrypted in production)
-    emergency_contact_name = Column(String, nullable=True)
-    emergency_contact_phone = Column(String, nullable=True)
-    emergency_contact_relation = Column(String, nullable=True)
+    system_password = Column(String(255), nullable=True)  # System password (should be encrypted in production)
+    emergency_contact_name = Column(String(255), nullable=True)
+    emergency_contact_phone = Column(String(50), nullable=True)
+    emergency_contact_relation = Column(String(100), nullable=True)
     
     # Address Information
     current_address = Column(Text, nullable=True)
     permanent_address = Column(Text, nullable=True)
-    city = Column(String, nullable=True)
-    state = Column(String, nullable=True)
-    postal_code = Column(String, nullable=True)
-    country = Column(String, nullable=True)
+    city = Column(String(255), nullable=True)
+    state = Column(String(255), nullable=True)
+    postal_code = Column(String(50), nullable=True)
+    country = Column(String(255), nullable=True)
     
     # Professional Information
-    department = Column(String, nullable=True)
+    department = Column(String(255), nullable=True)
     manager_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    employment_type = Column(String, nullable=True)  # Full-time, Part-time, Contract, Intern
-    work_location = Column(String, nullable=True)
-    work_schedule = Column(String, nullable=True)  # Regular hours, Shift work, etc.
+    employment_type = Column(String(100), nullable=True)  # Full-time, Part-time, Contract, Intern
+    work_location = Column(String(255), nullable=True)
+    work_schedule = Column(String(255), nullable=True)  # Regular hours, Shift work, etc.
     
     # Financial Information
-    basic_salary = Column(String, nullable=True)  # Store as string to handle different currencies
-    currency = Column(String, nullable=True, default="INR")
-    bank_name = Column(String, nullable=True)
-    bank_account_number = Column(String, nullable=True)
-    ifsc_code = Column(String, nullable=True)
+    basic_salary = Column(String(100), nullable=True)  # Store as string to handle different currencies
+    currency = Column(String(10), nullable=True, default="INR")
+    bank_name = Column(String(255), nullable=True)
+    bank_account_number = Column(String(100), nullable=True)
+    ifsc_code = Column(String(50), nullable=True)
     
     # Skills and Qualifications
     skills = Column(Text, nullable=True)  # JSON string of skills
     certifications = Column(Text, nullable=True)  # JSON string of certifications
-    education_qualification = Column(String, nullable=True)
+    education_qualification = Column(String(255), nullable=True)
     previous_experience_years = Column(Integer, nullable=True)
     
     # Probation Management
     probation_period_months = Column(Integer, nullable=True, default=6)  # Default 6 months
     probation_start_date = Column(Date, nullable=True)
     probation_end_date = Column(Date, nullable=True)
-    probation_status = Column(String, nullable=True, default="pending")  # pending, passed, failed, extended
+    probation_status = Column(String(100), nullable=True, default="pending")  # pending, passed, failed, extended
     probation_review_date = Column(Date, nullable=True)
     probation_review_notes = Column(Text, nullable=True)
     probation_reviewer_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     
     # Termination Management
     termination_date = Column(Date, nullable=True)
-    termination_reason = Column(String, nullable=True)  # resignation, dismissal, retirement, etc.
-    termination_type = Column(String, nullable=True)  # voluntary, involuntary, retirement
+    termination_reason = Column(String(255), nullable=True)  # resignation, dismissal, retirement, etc.
+    termination_type = Column(String(100), nullable=True)  # voluntary, involuntary, retirement
     termination_notice_period_days = Column(Integer, nullable=True)
     last_working_date = Column(Date, nullable=True)
     termination_notes = Column(Text, nullable=True)
     termination_initiated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     exit_interview_date = Column(Date, nullable=True)
     exit_interview_notes = Column(Text, nullable=True)
-    clearance_status = Column(String, nullable=True, default="pending")  # pending, completed
-    final_settlement_amount = Column(String, nullable=True)
+    clearance_status = Column(String(100), nullable=True, default="pending")  # pending, completed
+    final_settlement_amount = Column(String(100), nullable=True)
     final_settlement_date = Column(Date, nullable=True)
     # END merged EmployeeDetails fields
     
@@ -172,7 +172,7 @@ class Holiday(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     date = Column(DateTime(timezone=True), nullable=False)
-    title = Column(String, nullable=False)
+    title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -190,14 +190,14 @@ class EmailSettings(Base):
     __tablename__ = "email_settings"
     
     id = Column(Integer, primary_key=True, index=True)
-    smtp_server = Column(String, nullable=False)
+    smtp_server = Column(String(255), nullable=False)
     smtp_port = Column(Integer, nullable=False)
-    smtp_username = Column(String, nullable=False)
-    smtp_password = Column(String, nullable=False)  # Should be encrypted in production
+    smtp_username = Column(String(255), nullable=False)
+    smtp_password = Column(String(255), nullable=False)  # Should be encrypted in production
     smtp_use_tls = Column(Boolean, default=True)
     smtp_use_ssl = Column(Boolean, default=False)
-    from_email = Column(String, nullable=False)
-    from_name = Column(String, nullable=False)
+    from_email = Column(String(255), nullable=False)
+    from_name = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -211,10 +211,10 @@ class EmailTemplate(Base):
     __tablename__ = "email_templates"
     
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False, unique=True)
-    subject = Column(String, nullable=False)
+    name = Column(String(255), nullable=False, unique=True)
+    subject = Column(String(255), nullable=False)
     body = Column(Text, nullable=False)
-    template_type = Column(String, nullable=False)  # e.g., 'welcome', 'leave_approval', 'leave_rejection', etc.
+    template_type = Column(String(100), nullable=False)  # e.g., 'welcome', 'leave_approval', 'leave_rejection', etc.
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -229,11 +229,11 @@ class EmailLog(Base):
     __tablename__ = "email_logs"
     
     id = Column(Integer, primary_key=True, index=True)
-    recipient_email = Column(String, nullable=False)
-    recipient_name = Column(String, nullable=True)
-    subject = Column(String, nullable=False)
-    template_type = Column(String, nullable=True)
-    status = Column(String, nullable=False)  # 'sent', 'failed', 'pending'
+    recipient_email = Column(String(255), nullable=False)
+    recipient_name = Column(String(255), nullable=True)
+    subject = Column(String(255), nullable=False)
+    template_type = Column(String(255), nullable=True)
+    status = Column(String(50), nullable=False)  # 'sent', 'failed', 'pending'
     error_message = Column(Text, nullable=True)
     sent_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -254,25 +254,25 @@ class EmploymentHistory(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     
     # Position Information
-    position_title = Column(String, nullable=False)
-    department = Column(String, nullable=True)
-    employment_type = Column(String, nullable=True)  # Full-time, Part-time, Contract, Intern
-    work_location = Column(String, nullable=True)
+    position_title = Column(String(255), nullable=False)
+    department = Column(String(255), nullable=True)
+    employment_type = Column(String(100), nullable=True)  # Full-time, Part-time, Contract, Intern
+    work_location = Column(String(255), nullable=True)
     
     # Dates
     start_date = Column(Date, nullable=False)
     end_date = Column(Date, nullable=True)  # NULL for current position
     
     # Compensation
-    salary = Column(String, nullable=True)  # Store as string to handle different currencies
-    currency = Column(String, nullable=True, default="INR")
+    salary = Column(String(100), nullable=True)  # Store as string to handle different currencies
+    currency = Column(String(10), nullable=True, default="INR")
     
     # Reporting Structure
     manager_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    reporting_manager_name = Column(String, nullable=True)
+    reporting_manager_name = Column(String(255), nullable=True)
     
     # Status and Notes
-    status = Column(String, nullable=True)  # Active, Promoted, Transferred, Resigned, etc.
+    status = Column(String(100), nullable=True)  # Active, Promoted, Transferred, Resigned, etc.
     reason_for_change = Column(Text, nullable=True)
     notes = Column(Text, nullable=True)
     
@@ -309,7 +309,7 @@ class Task(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     
     # Task Information
-    name = Column(String, nullable=False)
+    name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     status = Column(Enum(TaskStatus), default=TaskStatus.PENDING, nullable=False)
     
@@ -318,8 +318,8 @@ class Task(Base):
     completed_at = Column(DateTime(timezone=True), nullable=True)
     
     # Priority and Category
-    priority = Column(String, nullable=True, default="medium")  # low, medium, high, urgent
-    category = Column(String, nullable=True)  # work, personal, project, etc.
+    priority = Column(String(50), nullable=True, default="medium")  # low, medium, high, urgent
+    category = Column(String(100), nullable=True)  # work, personal, project, etc.
     
     # System Information
     is_active = Column(Boolean, default=True)
@@ -395,12 +395,12 @@ class Log(Base):
     id = Column(Integer, primary_key=True, index=True)
     log_type = Column(Enum(LogType), nullable=False)
     message = Column(Text, nullable=False)
-    module = Column(String, nullable=True)  # Module/route where log was created
+    module = Column(String(255), nullable=True)  # Module/route where log was created
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # User who triggered the action
     error_details = Column(Text, nullable=True)  # Stack trace or detailed error info
-    request_path = Column(String, nullable=True)  # API endpoint path
-    request_method = Column(String, nullable=True)  # HTTP method
-    ip_address = Column(String, nullable=True)  # Client IP address
+    request_path = Column(String(255), nullable=True)  # API endpoint path
+    request_method = Column(String(10), nullable=True)  # HTTP method
+    ip_address = Column(String(50), nullable=True)  # Client IP address
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     # Relationships

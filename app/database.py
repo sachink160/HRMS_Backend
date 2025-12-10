@@ -9,15 +9,15 @@ from app.logger import log_info, log_error
 
 load_dotenv()
 
-# Database URL
+# Database URL (default points to MySQL via aiomysql)
 DATABASE_URL = os.getenv(
-    "DATABASE_URL", 
-    "postgresql+asyncpg://postgres:dwij9143@localhost:5432/hrms_db"
+    "DATABASE_URL",
+    "mysql+aiomysql://root:dwij@9143@localhost:3306/hrms_db",
 )
 
 # Create async engine with optimized settings
 engine = create_async_engine(
-    DATABASE_URL, 
+    DATABASE_URL,
     echo=False,  # Disable SQL logging in production
     pool_size=20,           # Increased pool size for better concurrency
     max_overflow=30,        # Allow overflow connections
@@ -25,12 +25,9 @@ engine = create_async_engine(
     pool_recycle=3600,      # Recycle connections every hour
     pool_timeout=30,        # Connection timeout in seconds
     connect_args={
-        "command_timeout": 60,  # Query timeout
-        "server_settings": {
-            "application_name": "hrms_backend",
-            "jit": "off"  # Disable JIT for better performance on small queries
-        }
-    }
+        "charset": "utf8mb4",
+        "sql_mode": "STRICT_ALL_TABLES",
+    },
 )
 
 # Create async session factory
