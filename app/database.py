@@ -11,8 +11,7 @@ load_dotenv()
 
 # Database URL (default points to MySQL via aiomysql)
 DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "mysql+aiomysql://root:dwij@9143@localhost:3306/hrms_db",
+    "DATABASE_URL"
 )
 
 # Create async engine with optimized settings
