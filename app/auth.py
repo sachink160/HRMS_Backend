@@ -12,10 +12,10 @@ from app.schema import TokenData
 import os
 
 # Security configuration
-SECRET_KEY = os.getenv("SECRET_KEY", "45ffc1e806f5004f5911291990b9a026ba7a6165e4071d7c5c842be8b71ec6ww")
+SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
 # Token expiration set to 30 days (43200 minutes) to prevent automatic logout
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "43200"))  # 30 days default
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES"))  # 30 days default
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()

@@ -23,7 +23,7 @@ import os
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
 # Secret codes from environment variables
-ADMIN_SECRET_CODE = os.getenv("ADMIN_SECRET_CODE", "New@123")
+ADMIN_SECRET_CODE = os.getenv("ADMIN_SECRET_CODE")
 
 @router.post("/register")
 async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
