@@ -151,7 +151,7 @@ def start_scheduler():
     # Schedule auto clock-out job to run daily at 11:55 PM
     scheduler.add_job(
         auto_clock_out_forgotten_sessions,
-        trigger=CronTrigger(hour=23, minute=55, timezone="UTC"),
+        trigger=CronTrigger(hour=23, minute=55, timezone="Asia/Kolkata"),
         id="auto_clock_out_daily",
         name="Auto Clock Out Forgotten Sessions",
         replace_existing=True
