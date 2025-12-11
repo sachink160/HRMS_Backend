@@ -6,6 +6,7 @@ from pathlib import Path
 import uuid
 from sqlalchemy.orm import selectinload
 from datetime import datetime, date, timezone
+from zoneinfo import ZoneInfo
 from typing import List, Dict, Any, Optional
 import json
 from app.database import get_db
@@ -21,6 +22,7 @@ from app.response import APIResponse
 from app.storage import storage
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+IST = ZoneInfo("Asia/Kolkata")
 
 async def safe_get_employee_details(db: AsyncSession, user_id: int):
     """With merged model, return the User record itself."""
@@ -2127,6 +2129,22 @@ def format_duration(seconds: int) -> str:
     
     return " ".join(parts)
 
+def ensure_aware(dt: datetime | str | None, assume_tz: timezone = IST) -> Optional[datetime]:
+    """
+    Normalize datetime values so comparisons don't fail on naive vs aware objects.
+    Assumes naive timestamps are in the provided timezone (default IST).
+    """
+    if dt is None:
+        return None
+    if isinstance(dt, str):
+        try:
+            dt = datetime.fromisoformat(dt.replace('Z', '+00:00'))
+        except Exception:
+            return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=assume_tz)
+    return dt
+
 @router.get("/tracker/{tracker_id}/timeline")
 async def get_tracker_timeline(
     tracker_id: int,
@@ -2154,89 +2172,22 @@ async def get_tracker_timeline(
         if not tracker.clock_in:
             return APIResponse.bad_request(message="Invalid tracker: missing clock_in time")
         
-        clock_in = tracker.clock_in
-        clock_out = tracker.clock_out or now
+        clock_in = ensure_aware(tracker.clock_in)
+        clock_out = ensure_aware(tracker.clock_out) or ensure_aware(now)
         
         if not clock_out:
-            clock_out = now or datetime.now(timezone.utc)
+            clock_out = ensure_aware(now) or datetime.now(timezone.utc)
+        
+        if not clock_in:
+            return APIResponse.bad_request(message="Invalid tracker: missing clock_in time")
         
         # Sort pause periods by start time
         sorted_pauses = sorted(
             [p for p in pause_periods if p.get('pause_start')],
-            key=lambda x: x.get('pause_start', '')
+            key=lambda x: ensure_aware(x.get('pause_start')) or datetime.min.replace(tzinfo=timezone.utc)
         )
-        
-        current_time = clock_in
-        
-        # Create timeline segments (work periods and break periods)
-        for pause in sorted_pauses:
-            pause_start_str = pause.get('pause_start')
-            pause_end_str = pause.get('pause_end')
-            
-            if not pause_start_str:
-                continue
-            
-            pause_start = datetime.fromisoformat(pause_start_str.replace('Z', '+00:00')) if isinstance(pause_start_str, str) else pause_start_str
-            
-            # Add work period before this pause
-            if current_time < pause_start:
-                work_duration = (pause_start - current_time).total_seconds()
-                timeline_segments.append({
-                    "type": "work",
-                    "start": current_time.isoformat(),
-                    "end": pause_start.isoformat(),
-                    "duration_seconds": int(work_duration),
-                    "duration_formatted": format_duration(int(work_duration))
-                })
-            
-            # Add break period
-            pause_end = None
-            is_active_break = False
-            
-            if pause_end_str:
-                pause_end = datetime.fromisoformat(pause_end_str.replace('Z', '+00:00')) if isinstance(pause_end_str, str) else pause_end_str
-            else:
-                # No pause_end means it's an active break
-                is_active_break = True
-                # For active breaks, we don't set pause_end - let frontend calculate real-time
-            
-            if pause_end:
-                # Closed break period
-                break_duration = (pause_end - pause_start).total_seconds()
-                timeline_segments.append({
-                    "type": "break",
-                    "start": pause_start.isoformat(),
-                    "end": pause_end.isoformat(),
-                    "duration_seconds": int(break_duration),
-                    "duration_formatted": format_duration(int(break_duration))
-                })
-                current_time = pause_end
-            else:
-                # Open break (currently on break) - calculate initial duration but mark as active
-                break_duration = (now - pause_start).total_seconds() if now else 0
-                timeline_segments.append({
-                    "type": "break",
-                    "start": pause_start.isoformat(),
-                    "end": None,
-                    "duration_seconds": int(break_duration) if now else None,
-                    "duration_formatted": format_duration(int(break_duration)) if now else "Ongoing",
-                    "is_active": True
-                })
-                # Don't update current_time for active breaks - it's still ongoing
-                current_time = pause_start
-        
-        # Add final work period after last pause
-        if current_time < clock_out:
-            work_duration = (clock_out - current_time).total_seconds()
-            timeline_segments.append({
-                "type": "work",
-                "start": current_time.isoformat(),
-                "end": clock_out.isoformat(),
-                "duration_seconds": int(work_duration),
-                "duration_formatted": format_duration(int(work_duration))
-            })
-        
-        # If no pauses, add single work period
+
+        # No pauses: single work segment
         if not sorted_pauses:
             work_duration = (clock_out - clock_in).total_seconds()
             timeline_segments.append({
@@ -2246,6 +2197,78 @@ async def get_tracker_timeline(
                 "duration_seconds": int(work_duration),
                 "duration_formatted": format_duration(int(work_duration))
             })
+        else:
+            current_time = clock_in
+            
+            # Create timeline segments (work periods and break periods)
+            for pause in sorted_pauses:
+                pause_start_str = pause.get('pause_start')
+                pause_end_str = pause.get('pause_end')
+                
+                if not pause_start_str:
+                    continue
+                
+                pause_start = ensure_aware(pause_start_str)
+                if not pause_start:
+                    continue
+                
+                # Add work period before this pause
+                if current_time and current_time < pause_start:
+                    work_duration = (pause_start - current_time).total_seconds()
+                    timeline_segments.append({
+                        "type": "work",
+                        "start": current_time.isoformat(),
+                        "end": pause_start.isoformat(),
+                        "duration_seconds": int(work_duration),
+                        "duration_formatted": format_duration(int(work_duration))
+                    })
+                
+                # Add break period
+                pause_end = None
+                is_active_break = False
+                
+                if pause_end_str:
+                    pause_end = ensure_aware(pause_end_str)
+                else:
+                    # No pause_end means it's an active break
+                    is_active_break = True
+                    # For active breaks, we don't set pause_end - let frontend calculate real-time
+                
+                if pause_end:
+                    # Closed break period
+                    break_duration = (pause_end - pause_start).total_seconds()
+                    timeline_segments.append({
+                        "type": "break",
+                        "start": pause_start.isoformat(),
+                        "end": pause_end.isoformat(),
+                        "duration_seconds": int(break_duration),
+                        "duration_formatted": format_duration(int(break_duration))
+                    })
+                    current_time = pause_end
+                else:
+                    # Open break (currently on break) - calculate initial duration but mark as active
+                    break_duration = (now - pause_start).total_seconds() if now else 0
+                    timeline_segments.append({
+                        "type": "break",
+                        "start": pause_start.isoformat(),
+                        "end": None,
+                        "duration_seconds": int(break_duration) if now else None,
+                        "duration_formatted": format_duration(int(break_duration)) if now else "Ongoing",
+                        "is_active": True
+                    })
+                    # Don't update current_time for active breaks - it's still ongoing
+                    current_time = pause_start
+            
+            # Add final work period after last pause
+            if current_time and current_time < clock_out:
+                work_duration = (clock_out - current_time).total_seconds()
+                timeline_segments.append({
+                    "type": "work",
+                    "start": current_time.isoformat(),
+                    "end": clock_out.isoformat(),
+                    "duration_seconds": int(work_duration),
+                    "duration_formatted": format_duration(int(work_duration))
+                })
         
         # Calculate total duration for timeline
         total_duration = (clock_out - clock_in).total_seconds()

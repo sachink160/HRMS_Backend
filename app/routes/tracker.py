@@ -4,6 +4,7 @@ from sqlalchemy import select, and_, func, or_
 from sqlalchemy.orm import selectinload
 from datetime import datetime, date, timezone, timedelta
 from typing import List, Optional
+from zoneinfo import ZoneInfo
 import json
 from app.database import get_db
 from app.models import User, TimeTracker, TrackerStatus
@@ -16,6 +17,34 @@ from app.logger import log_info, log_error
 from app.response import APIResponse
 
 router = APIRouter(prefix="/tracker", tags=["tracker"])
+
+IST = ZoneInfo("Asia/Kolkata")
+
+def ensure_timezone_aware(dt: Optional[datetime]) -> Optional[datetime]:
+    """
+    Normalize datetime to timezone-aware (UTC by default) to prevent naive/aware subtraction errors.
+    Accepts datetime or ISO string and returns a timezone-aware datetime.
+    """
+    if dt is None:
+        return None
+    
+    if isinstance(dt, str):
+        try:
+            dt = datetime.fromisoformat(dt.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    
+    return dt
+
+def get_now_and_today_ist():
+    # Use timezone-aware UTC to avoid implicit local conversions
+    now_utc = datetime.now(timezone.utc)
+    now_ist = now_utc.astimezone(IST)
+    today_ist = now_ist.date()
+    return now_ist, today_ist
 
 def parse_pause_periods(pause_periods_json: Optional[str]) -> List[dict]:
     """Parse pause periods JSON string to list of dicts."""
@@ -37,7 +66,11 @@ def calculate_work_time(clock_in: datetime, clock_out: Optional[datetime], pause
     Calculate total work seconds and pause seconds.
     Returns: (total_work_seconds, total_pause_seconds)
     """
-    end_time = clock_out or current_time or datetime.now(timezone.utc)
+    clock_in = ensure_timezone_aware(clock_in)
+    clock_out = ensure_timezone_aware(clock_out)
+    current_time = ensure_timezone_aware(current_time)
+
+    end_time = clock_out or current_time or ensure_timezone_aware(datetime.now(timezone.utc))
     
     if not clock_in:
         return (0, 0)
@@ -52,15 +85,15 @@ def calculate_work_time(clock_in: datetime, clock_out: Optional[datetime], pause
         pause_end_str = pause.get('pause_end')
         
         if pause_start_str:
-            pause_start = datetime.fromisoformat(pause_start_str.replace('Z', '+00:00')) if isinstance(pause_start_str, str) else pause_start_str
+            pause_start = ensure_timezone_aware(pause_start_str)
             pause_end = None
             
             if pause_end_str:
-                pause_end = datetime.fromisoformat(pause_end_str.replace('Z', '+00:00')) if isinstance(pause_end_str, str) else pause_end_str
+                pause_end = ensure_timezone_aware(pause_end_str)
             elif not clock_out:  # If session is still active and pause is open
                 pause_end = end_time
             
-            if pause_end:
+            if pause_end and pause_start:
                 total_pause += (pause_end - pause_start).total_seconds()
     
     total_work = max(0, total_elapsed - total_pause)
@@ -109,8 +142,7 @@ async def clock_in(
 ):
     """Clock in - Start a new tracking session."""
     try:
-        now = datetime.now(timezone.utc)
-        today = now.date()
+        now, today = get_now_and_today_ist()
         
         # Check if user already has an active session today
         result = await db.execute(
@@ -166,7 +198,7 @@ async def pause(
 ):
     """Pause current tracking session."""
     try:
-        today = date.today()
+        now, today = get_now_and_today_ist()
         
         # Find active session
         result = await db.execute(
@@ -194,7 +226,6 @@ async def pause(
             )
         
         # Add new pause period
-        now = datetime.now(timezone.utc)
         pause_periods.append({
             "pause_start": now.isoformat(),
             "pause_end": None
@@ -228,7 +259,7 @@ async def resume(
 ):
     """Resume paused tracking session."""
     try:
-        today = date.today()
+        now, today = get_now_and_today_ist()
         
         # Find paused session
         result = await db.execute(
@@ -256,7 +287,6 @@ async def resume(
             )
         
         # Close the last pause period
-        now = datetime.now(timezone.utc)
         pause_periods[-1]["pause_end"] = now.isoformat()
         
         tracker.pause_periods = serialize_pause_periods(pause_periods)
@@ -287,8 +317,7 @@ async def clock_out(
 ):
     """Clock out - End current tracking session."""
     try:
-        today = date.today()
-        now = datetime.now(timezone.utc)
+        now, today = get_now_and_today_ist()
         
         # Find active or paused session
         result = await db.execute(
@@ -347,7 +376,7 @@ async def get_current_session(
 ):
     """Get current active/paused session status."""
     try:
-        today = date.today()
+        _, today = get_now_and_today_ist()
         
         result = await db.execute(
             select(TimeTracker)
