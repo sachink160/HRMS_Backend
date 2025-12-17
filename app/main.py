@@ -15,7 +15,7 @@ from app.exceptions import (
 )
 from app.response import APIResponse
 from app.storage import STORAGE_TYPE
-from app.scheduler import start_scheduler, shutdown_scheduler
+from app.scheduler import start_scheduler, shutdown_scheduler, scheduler
 import os
 
 @asynccontextmanager
@@ -28,13 +28,21 @@ async def lifespan(app: FastAPI):
     # to ensure database is up to date
     
     # Start scheduler for automated tasks
-    start_scheduler()
+    try:
+        start_scheduler()
+        log_info("Scheduler initialization completed")
+    except Exception as e:
+        log_error(f"Failed to start scheduler during application startup: {str(e)}", exc_info=e)
+        # Don't raise - allow application to start even if scheduler fails
     
     yield
     
     # Shutdown
     log_info("Shutting down HRMS Backend Application")
-    shutdown_scheduler()
+    try:
+        shutdown_scheduler()
+    except Exception as e:
+        log_error(f"Error shutting down scheduler: {str(e)}", exc_info=e)
 
 # Create FastAPI app
 app = FastAPI(
@@ -100,6 +108,32 @@ async def health_check():
         data={"status": "healthy"},
         message="HRMS Backend is running"
     )
+
+@app.get("/scheduler/status")
+async def scheduler_status():
+    """Check scheduler status and jobs."""
+    try:
+        jobs = []
+        if scheduler.running:
+            for job in scheduler.get_jobs():
+                jobs.append({
+                    "id": job.id,
+                    "name": job.name,
+                    "next_run_time": str(job.next_run_time) if job.next_run_time else None,
+                    "trigger": str(job.trigger)
+                })
+        
+        return APIResponse.success(
+            data={
+                "scheduler_running": scheduler.running,
+                "jobs": jobs,
+                "job_count": len(jobs)
+            },
+            message="Scheduler status retrieved"
+        )
+    except Exception as e:
+        log_error(f"Error getting scheduler status: {str(e)}", exc_info=e)
+        return APIResponse.internal_error(message="Failed to get scheduler status")
 
 # if __name__ == "__main__":
 #     import uvicorn

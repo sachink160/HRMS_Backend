@@ -20,7 +20,7 @@ router = APIRouter(prefix="/tracker", tags=["tracker"])
 
 IST = ZoneInfo("Asia/Kolkata")
 
-def ensure_timezone_aware(dt: Optional[datetime]) -> Optional[datetime]:
+def ensure_timezone_aware(dt: Optional[datetime], assume_tz: timezone = IST) -> Optional[datetime]:
     """
     Normalize datetime to timezone-aware (UTC by default) to prevent naive/aware subtraction errors.
     Accepts datetime or ISO string and returns a timezone-aware datetime.
@@ -35,7 +35,7 @@ def ensure_timezone_aware(dt: Optional[datetime]) -> Optional[datetime]:
             return None
     
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
+        return dt.replace(tzinfo=assume_tz)
     
     return dt
 
@@ -75,26 +75,41 @@ def calculate_work_time(clock_in: datetime, clock_out: Optional[datetime], pause
     if not clock_in:
         return (0, 0)
     
-    # Total elapsed time
-    total_elapsed = (end_time - clock_in).total_seconds()
+    # Normalize to UTC for consistent math
+    clock_in_utc = clock_in.astimezone(timezone.utc)
+    end_time_utc = end_time.astimezone(timezone.utc)
+
+    # Total elapsed time (clamped non-negative)
+    total_elapsed = max(0, (end_time_utc - clock_in_utc).total_seconds())
     
-    # Calculate total pause time
+    # Calculate total pause time (clamped to session window)
     total_pause = 0
     for pause in pause_periods:
         pause_start_str = pause.get('pause_start')
         pause_end_str = pause.get('pause_end')
         
-        if pause_start_str:
-            pause_start = ensure_timezone_aware(pause_start_str)
-            pause_end = None
-            
-            if pause_end_str:
-                pause_end = ensure_timezone_aware(pause_end_str)
-            elif not clock_out:  # If session is still active and pause is open
-                pause_end = end_time
-            
-            if pause_end and pause_start:
-                total_pause += (pause_end - pause_start).total_seconds()
+        if not pause_start_str:
+            continue
+
+        pause_start = ensure_timezone_aware(pause_start_str)
+        pause_end = ensure_timezone_aware(pause_end_str) if pause_end_str else None
+
+        if not pause_end and not clock_out:
+            # If session still active and pause is open, treat end as current end_time
+            pause_end = end_time
+
+        if not pause_start or not pause_end:
+            continue
+
+        pause_start_utc = pause_start.astimezone(timezone.utc)
+        pause_end_utc = pause_end.astimezone(timezone.utc)
+
+        # Clamp pause to the session window
+        effective_start = max(clock_in_utc, pause_start_utc)
+        effective_end = min(end_time_utc, pause_end_utc)
+
+        if effective_end > effective_start:
+            total_pause += (effective_end - effective_start).total_seconds()
     
     total_work = max(0, total_elapsed - total_pause)
     return (int(total_work), int(total_pause))
@@ -103,10 +118,13 @@ def tracker_to_dict(tracker: TimeTracker, include_user: bool = False) -> dict:
     """Convert TimeTracker model to dictionary for response."""
     pause_periods = parse_pause_periods(tracker.pause_periods)
     
-    # Calculate work hours
-    total_work_hours = None
-    if tracker.total_work_seconds is not None:
-        total_work_hours = round(tracker.total_work_seconds / 3600, 2)
+    # Recalculate work and pause using normalized times to avoid stale/incorrect totals
+    total_work_seconds, total_pause_seconds = calculate_work_time(
+        tracker.clock_in,
+        tracker.clock_out,
+        pause_periods
+    )
+    total_work_hours = round(total_work_seconds / 3600, 2)
     
     result = {
         "id": tracker.id,
@@ -116,8 +134,8 @@ def tracker_to_dict(tracker: TimeTracker, include_user: bool = False) -> dict:
         "clock_out": tracker.clock_out.isoformat() if tracker.clock_out else None,
         "status": tracker.status.value if hasattr(tracker.status, 'value') else str(tracker.status),
         "pause_periods": pause_periods,
-        "total_work_seconds": tracker.total_work_seconds,
-        "total_pause_seconds": tracker.total_pause_seconds,
+        "total_work_seconds": total_work_seconds,
+        "total_pause_seconds": total_pause_seconds,
         "total_work_hours": total_work_hours,
         "created_at": tracker.created_at.isoformat() if tracker.created_at else None,
         "updated_at": tracker.updated_at.isoformat() if tracker.updated_at else None,

@@ -686,6 +686,54 @@ class TrackerSummaryResponse(BaseModel):
     total_work_hours: float
     status: str
 
+class DurationHMS(BaseModel):
+    """Hours/minutes/seconds breakdown."""
+    hours: int
+    minutes: int
+    seconds: int
+
+class TrackerDailyHours(BaseModel):
+    """Per-day aggregation for hours charts."""
+    date: date
+    total_work_seconds: int
+    total_work_hours: float
+    total_work_hms: DurationHMS
+
+class TrackerHoursSummary(BaseModel):
+    """Aggregate hours summary within a date range."""
+    total_work_seconds: int
+    total_work_hours: float
+    days_worked: int
+    avg_daily_hours: float
+    total_work_hms: DurationHMS
+    avg_daily_hms: DurationHMS
+
+class TrackerUserHours(BaseModel):
+    """Aggregate hours per user for admin dashboard tables."""
+    user_id: int
+    user_name: Optional[str] = None
+    user_email: Optional[str] = None
+    total_work_seconds: int
+    total_work_hours: float
+    days_worked: int
+    avg_daily_hours: float
+    total_work_hms: DurationHMS
+    avg_daily_hms: DurationHMS
+
+class TrackerHoursResponse(BaseModel):
+    """Hours summary plus per-day breakdown."""
+    date_range_start: date
+    date_range_end: date
+    user_id: Optional[int] = None
+    summary: TrackerHoursSummary
+    daily: List[TrackerDailyHours]
+
+class TrackerHoursByUserResponse(BaseModel):
+    """Aggregated hours grouped by user."""
+    date_range_start: date
+    date_range_end: date
+    items: List[TrackerUserHours]
+
 # File Upload Schemas
 class FileUploadResponse(BaseModel):
     filename: str

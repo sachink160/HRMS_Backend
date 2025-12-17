@@ -5,16 +5,17 @@ from fastapi import UploadFile, File
 from pathlib import Path
 import uuid
 from sqlalchemy.orm import selectinload
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timezone, timedelta
 from zoneinfo import ZoneInfo
 from typing import List, Dict, Any, Optional
 import json
-from app.database import get_db
+from app.database import get_db, monitor_query
 from app.models import User, Leave, Holiday, LeaveStatus, UserRole, DocumentStatus, EmploymentHistory, TimeTracker, TrackerStatus
 from app.schema import (
     UserResponse, LeaveResponse, HolidayResponse, TrackerResponse, UserCreate,
     EmploymentHistoryResponse, EmployeeSummary, EnhancedTrackerResponse,
-    EmployeeDetailsCreate, EmployeeDetailsUpdate, EmploymentHistoryCreate, AdminUserUpdate
+    EmployeeDetailsCreate, EmployeeDetailsUpdate, EmploymentHistoryCreate, AdminUserUpdate,
+    TrackerHoursSummary, TrackerDailyHours, TrackerUserHours, DurationHMS
 )
 from app.auth import get_current_admin_user, get_password_hash
 from app.logger import log_info, log_error
@@ -1946,6 +1947,22 @@ async def get_enhanced_dashboard_stats(
         }
 
 # Helper functions for tracker (duplicated from tracker.py to avoid circular imports)
+def ensure_timezone_aware(dt: Optional[datetime], assume_tz: timezone = IST) -> Optional[datetime]:
+    """
+    Normalize datetime to timezone-aware using the provided timezone for naive values.
+    Accepts datetime or ISO string and returns a timezone-aware datetime.
+    """
+    if dt is None:
+        return None
+    if isinstance(dt, str):
+        try:
+            dt = datetime.fromisoformat(dt.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=assume_tz)
+    return dt
+
 def parse_pause_periods(pause_periods_json: Optional[str]) -> List[dict]:
     """Parse pause periods JSON string to list of dicts."""
     if not pause_periods_json:
@@ -1955,14 +1972,110 @@ def parse_pause_periods(pause_periods_json: Optional[str]) -> List[dict]:
     except (json.JSONDecodeError, TypeError):
         return []
 
+def calculate_work_time(clock_in: datetime, clock_out: Optional[datetime], pause_periods: List[dict], current_time: Optional[datetime] = None) -> tuple[int, int]:
+    """
+    Calculate total work seconds and pause seconds with timezone-safe math.
+    Returns: (total_work_seconds, total_pause_seconds)
+    """
+    clock_in = ensure_timezone_aware(clock_in)
+    clock_out = ensure_timezone_aware(clock_out)
+    current_time = ensure_timezone_aware(current_time)
+
+    end_time = clock_out or current_time or ensure_timezone_aware(datetime.now(timezone.utc))
+    
+    if not clock_in:
+        return (0, 0)
+    
+    # Normalize to UTC for consistent math
+    clock_in_utc = clock_in.astimezone(timezone.utc)
+    end_time_utc = end_time.astimezone(timezone.utc)
+
+    # Total elapsed time (clamped non-negative)
+    total_elapsed = max(0, (end_time_utc - clock_in_utc).total_seconds())
+    
+    # Calculate total pause time (clamped to session window)
+    total_pause = 0
+    for pause in pause_periods:
+        pause_start_str = pause.get('pause_start')
+        pause_end_str = pause.get('pause_end')
+        
+        if not pause_start_str:
+            continue
+
+        pause_start = ensure_timezone_aware(pause_start_str)
+        pause_end = ensure_timezone_aware(pause_end_str) if pause_end_str else None
+
+        if not pause_end and not clock_out:
+            # If session still active and pause is open, treat end as current end_time
+            pause_end = end_time
+
+        if not pause_start or not pause_end:
+            continue
+
+        pause_start_utc = pause_start.astimezone(timezone.utc)
+        pause_end_utc = pause_end.astimezone(timezone.utc)
+
+        # Clamp pause to the session window
+        effective_start = max(clock_in_utc, pause_start_utc)
+        effective_end = min(end_time_utc, pause_end_utc)
+
+        if effective_end > effective_start:
+            total_pause += (effective_end - effective_start).total_seconds()
+    
+    total_work = max(0, total_elapsed - total_pause)
+    return (int(total_work), int(total_pause))
+
+def resolve_date_range(start_date: Optional[date], end_date: Optional[date]) -> tuple[date, date]:
+    """
+    Resolve optional date range to sensible defaults (last 30 days) and ensure ordering.
+    """
+    today_ist = datetime.now(IST).date()
+    resolved_end = end_date or today_ist
+    resolved_start = start_date or (resolved_end - timedelta(days=29))
+    
+    if resolved_start > resolved_end:
+        resolved_start, resolved_end = resolved_end, resolved_start
+    
+    return resolved_start, resolved_end
+
+def compute_effective_work_seconds(tracker: TimeTracker) -> int:
+    """
+    Get reliable work seconds, recalculating for active/paused sessions.
+    """
+    pause_periods = parse_pause_periods(tracker.pause_periods)
+    
+    if tracker.total_work_seconds is not None and tracker.status == TrackerStatus.COMPLETED:
+        return max(0, tracker.total_work_seconds)
+    
+    work_seconds, _ = calculate_work_time(
+        tracker.clock_in,
+        tracker.clock_out,
+        pause_periods,
+        current_time=datetime.now(timezone.utc)
+    )
+    return max(0, work_seconds)
+
+def seconds_to_hms(total_seconds: int) -> DurationHMS:
+    """
+    Convert seconds to hours/minutes/seconds breakdown.
+    """
+    safe_seconds = max(0, int(total_seconds or 0))
+    hours = safe_seconds // 3600
+    minutes = (safe_seconds % 3600) // 60
+    seconds = safe_seconds % 60
+    return DurationHMS(hours=hours, minutes=minutes, seconds=seconds)
+
 def tracker_to_dict(tracker: TimeTracker, include_user: bool = False) -> dict:
     """Convert TimeTracker model to dictionary for response."""
     pause_periods = parse_pause_periods(tracker.pause_periods)
     
-    # Calculate work hours
-    total_work_hours = None
-    if tracker.total_work_seconds is not None:
-        total_work_hours = round(tracker.total_work_seconds / 3600, 2)
+    # Recalculate work/pause to avoid stale totals
+    total_work_seconds, total_pause_seconds = calculate_work_time(
+        tracker.clock_in,
+        tracker.clock_out,
+        pause_periods
+    )
+    total_work_hours = round(total_work_seconds / 3600, 2)
     
     result = {
         "id": tracker.id,
@@ -1972,8 +2085,8 @@ def tracker_to_dict(tracker: TimeTracker, include_user: bool = False) -> dict:
         "clock_out": tracker.clock_out.isoformat() if tracker.clock_out else None,
         "status": tracker.status.value if hasattr(tracker.status, 'value') else str(tracker.status),
         "pause_periods": pause_periods,
-        "total_work_seconds": tracker.total_work_seconds,
-        "total_pause_seconds": tracker.total_pause_seconds,
+        "total_work_seconds": total_work_seconds,
+        "total_pause_seconds": total_pause_seconds,
         "total_work_hours": total_work_hours,
         "created_at": tracker.created_at.isoformat() if tracker.created_at else None,
         "updated_at": tracker.updated_at.isoformat() if tracker.updated_at else None,
@@ -2049,6 +2162,54 @@ async def get_all_trackers(
     except Exception as e:
         log_error(f"Get all trackers error: {str(e)}")
         return APIResponse.internal_error(message="Failed to fetch tracking data")
+
+@router.post("/tracker/recompute-all")
+async def recompute_all_trackers(db: AsyncSession = Depends(get_db)):
+    """
+    Maintenance endpoint: recompute total_work_seconds/total_pause_seconds for all trackers.
+    WARNING: No auth enforced per request. Secure before production use.
+    """
+    try:
+        result = await db.execute(select(TimeTracker))
+        trackers = result.scalars().all()
+
+        processed = 0
+        updated = 0
+
+        for tracker in trackers:
+            pause_periods = parse_pause_periods(tracker.pause_periods)
+            total_work, total_pause = calculate_work_time(
+                tracker.clock_in,
+                tracker.clock_out,
+                pause_periods
+            )
+
+            processed += 1
+            if (
+                tracker.total_work_seconds != total_work
+                or tracker.total_pause_seconds != total_pause
+            ):
+                tracker.total_work_seconds = total_work
+                tracker.total_pause_seconds = total_pause
+                tracker.total_work_hours = round(total_work / 3600, 2) if hasattr(tracker, "total_work_hours") else None
+                tracker.updated_at = datetime.now(timezone.utc)
+                updated += 1
+
+        await db.commit()
+
+        return APIResponse.success(
+            data={
+                "processed": processed,
+                "updated": updated
+            },
+            message="Recompute completed (UNPROTECTED ENDPOINT; secure before production)"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        log_error(f"Recompute trackers error: {str(e)}")
+        return APIResponse.internal_error(message="Failed to recompute tracker totals")
 
 @router.get("/tracker/employee/{user_id}")
 async def get_employee_trackers(
@@ -2134,16 +2295,7 @@ def ensure_aware(dt: datetime | str | None, assume_tz: timezone = IST) -> Option
     Normalize datetime values so comparisons don't fail on naive vs aware objects.
     Assumes naive timestamps are in the provided timezone (default IST).
     """
-    if dt is None:
-        return None
-    if isinstance(dt, str):
-        try:
-            dt = datetime.fromisoformat(dt.replace('Z', '+00:00'))
-        except Exception:
-            return None
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=assume_tz)
-    return dt
+    return ensure_timezone_aware(dt, assume_tz)
 
 @router.get("/tracker/{tracker_id}/timeline")
 async def get_tracker_timeline(
@@ -2360,3 +2512,163 @@ async def get_tracker_summary(
     except Exception as e:
         log_error(f"Get tracker summary error: {str(e)}")
         return APIResponse.internal_error(message="Failed to fetch tracking summary")
+
+@router.get("/tracker/hours-summary")
+async def get_tracker_hours_summary(
+    start_date: Optional[date] = Query(None, description="Start date (defaults to last 30 days)"),
+    end_date: Optional[date] = Query(None, description="End date (defaults to today)"),
+    user_id: Optional[int] = Query(None, description="Filter by user ID"),
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Aggregate total hours, daily averages, and per-day breakdown for admin dashboard."""
+    try:
+        resolved_start, resolved_end = resolve_date_range(start_date, end_date)
+        
+        async with monitor_query("admin_tracker_hours_summary"):
+            query = (
+                select(TimeTracker)
+                .options(selectinload(TimeTracker.user))
+                .where(
+                    and_(
+                        TimeTracker.date >= resolved_start,
+                        TimeTracker.date <= resolved_end
+                    )
+                )
+            )
+            
+            if user_id:
+                query = query.where(TimeTracker.user_id == user_id)
+            
+            result = await db.execute(query.order_by(TimeTracker.date.asc()))
+            trackers = result.scalars().all()
+        
+        daily_totals: dict[date, int] = {}
+        for tracker in trackers:
+            work_seconds = compute_effective_work_seconds(tracker)
+            if tracker.date:
+                daily_totals[tracker.date] = daily_totals.get(tracker.date, 0) + work_seconds
+        
+        total_seconds = sum(daily_totals.values())
+        days_worked = len(daily_totals)
+        avg_daily_hours = round((total_seconds / 3600) / days_worked, 2) if days_worked else 0.0
+        avg_daily_seconds = round(total_seconds / days_worked) if days_worked else 0
+        
+        summary = TrackerHoursSummary(
+            total_work_seconds=total_seconds,
+            total_work_hours=round(total_seconds / 3600, 2),
+            days_worked=days_worked,
+            avg_daily_hours=avg_daily_hours,
+            total_work_hms=seconds_to_hms(total_seconds),
+            avg_daily_hms=seconds_to_hms(avg_daily_seconds)
+        )
+        
+        daily_models = [
+            TrackerDailyHours(
+                date=day,
+                total_work_seconds=seconds,
+                total_work_hours=round(seconds / 3600, 2),
+                total_work_hms=seconds_to_hms(seconds)
+            )
+            for day, seconds in sorted(daily_totals.items())
+        ]
+        
+        return APIResponse.success(
+            data={
+                "date_range_start": resolved_start.isoformat(),
+                "date_range_end": resolved_end.isoformat(),
+                "user_id": user_id,
+                "summary": summary.model_dump(),
+                "daily": [
+                    {**item.model_dump(), "date": item.date.isoformat()}
+                    for item in daily_models
+                ]
+            },
+            message="Tracker hours summary retrieved successfully"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Get tracker hours summary error: {str(e)}")
+        return APIResponse.internal_error(message="Failed to fetch tracker hours summary")
+
+@router.get("/tracker/hours-by-user")
+async def get_tracker_hours_by_user(
+    start_date: Optional[date] = Query(None, description="Start date (defaults to last 30 days)"),
+    end_date: Optional[date] = Query(None, description="End date (defaults to today)"),
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Aggregate hours grouped by user for admin dashboard tables."""
+    try:
+        resolved_start, resolved_end = resolve_date_range(start_date, end_date)
+        
+        async with monitor_query("admin_tracker_hours_by_user"):
+            query = (
+                select(TimeTracker)
+                .options(selectinload(TimeTracker.user))
+                .where(
+                    and_(
+                        TimeTracker.date >= resolved_start,
+                        TimeTracker.date <= resolved_end
+                    )
+                )
+            )
+            
+            result = await db.execute(query)
+            trackers = result.scalars().all()
+        
+        per_user: Dict[int, Dict[str, Any]] = {}
+        for tracker in trackers:
+            work_seconds = compute_effective_work_seconds(tracker)
+            entry = per_user.setdefault(
+                tracker.user_id,
+                {
+                    "work_seconds": 0,
+                    "days": set(),
+                    "user": tracker.user
+                }
+            )
+            entry["work_seconds"] += work_seconds
+            if tracker.date:
+                entry["days"].add(tracker.date)
+        
+        items = []
+        for user_id, entry in per_user.items():
+            days_worked = len(entry["days"])
+            total_seconds = entry["work_seconds"]
+            total_hours = round(total_seconds / 3600, 2)
+            avg_daily_hours = round(total_hours / days_worked, 2) if days_worked else 0.0
+            avg_daily_seconds = round(total_seconds / days_worked) if days_worked else 0
+            
+            items.append(
+                TrackerUserHours(
+                    user_id=user_id,
+                    user_name=entry["user"].name if entry.get("user") else None,
+                    user_email=entry["user"].email if entry.get("user") else None,
+                    total_work_seconds=total_seconds,
+                    total_work_hours=total_hours,
+                    days_worked=days_worked,
+                    avg_daily_hours=avg_daily_hours,
+                    total_work_hms=seconds_to_hms(total_seconds),
+                    avg_daily_hms=seconds_to_hms(avg_daily_seconds)
+                )
+            )
+        
+        # Sort by total work descending for easier dashboard display
+        items.sort(key=lambda x: x.total_work_seconds, reverse=True)
+        
+        return APIResponse.success(
+            data={
+                "date_range_start": resolved_start.isoformat(),
+                "date_range_end": resolved_end.isoformat(),
+                "items": [item.model_dump() for item in items],
+                "total_users": len(items)
+            },
+            message="Tracker hours grouped by user retrieved successfully"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Get tracker hours by user error: {str(e)}")
+        return APIResponse.internal_error(message="Failed to fetch tracker hours by user")
