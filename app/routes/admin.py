@@ -2490,7 +2490,11 @@ async def get_tracker_summary(
         for row in rows:
             user = users.get(row.user_id)
             if user:
-                total_hours = round((row.total_work_seconds or 0) / 3600, 2)
+                # Convert Decimal to int for JSON serialization
+                total_seconds = int(row.total_work_seconds) if row.total_work_seconds else 0
+                total_hours = round(total_seconds / 3600, 2)
+                # Convert to human-readable hours/minutes/seconds format
+                work_hms = seconds_to_hms(total_seconds)
                 summary_data.append({
                     "user_id": row.user_id,
                     "user_name": user.name,
@@ -2499,6 +2503,11 @@ async def get_tracker_summary(
                     "clock_in": row.clock_in.isoformat() if row.clock_in else None,
                     "clock_out": row.clock_out.isoformat() if row.clock_out else None,
                     "total_work_hours": total_hours,
+                    "total_work_hms": {
+                        "hours": work_hms.hours,
+                        "minutes": work_hms.minutes,
+                        "seconds": work_hms.seconds
+                    },
                     "status": str(row.status) if row.status else None
                 })
         
