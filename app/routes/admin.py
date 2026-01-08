@@ -2522,6 +2522,108 @@ async def get_tracker_summary(
         log_error(f"Get tracker summary error: {str(e)}")
         return APIResponse.internal_error(message="Failed to fetch tracking summary")
 
+@router.get("/tracker/summary-grouped")
+async def get_tracker_summary_grouped(
+    start_date: Optional[date] = Query(None, description="Start date filter"),
+    end_date: Optional[date] = Query(None, description="End date filter"),
+    user_id: Optional[int] = Query(None, description="Filter by user ID"),
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get tracking summary grouped by user (admin only)."""
+    try:
+        query = select(TimeTracker).options(selectinload(TimeTracker.user))
+        
+        # Apply filters
+        if user_id:
+            query = query.where(TimeTracker.user_id == user_id)
+        if start_date:
+            query = query.where(TimeTracker.date >= start_date)
+        if end_date:
+            query = query.where(TimeTracker.date <= end_date)
+        
+        query = query.order_by(TimeTracker.date.desc())
+        
+        result = await db.execute(query)
+        trackers = result.scalars().all()
+        
+        # Group by user
+        user_groups: Dict[int, Dict[str, Any]] = {}
+        
+        for tracker in trackers:
+            if not tracker.user:
+                continue
+            
+            user_id_key = tracker.user_id
+            
+            # Initialize user group if not exists
+            if user_id_key not in user_groups:
+                user_groups[user_id_key] = {
+                    "user_id": tracker.user_id,
+                    "user_name": tracker.user.name,
+                    "user_email": tracker.user.email,
+                    "tracking_records": [],
+                    "total_work_seconds": 0,
+                    "total_days_tracked": 0
+                }
+            
+            # Calculate work time for this tracker
+            total_seconds = tracker.total_work_seconds if tracker.total_work_seconds else 0
+            total_hours = round(total_seconds / 3600, 2)
+            work_hms = seconds_to_hms(total_seconds)
+            
+            # Add tracking record
+            user_groups[user_id_key]["tracking_records"].append({
+                "date": tracker.date.isoformat() if tracker.date else None,
+                "clock_in": tracker.clock_in.isoformat() if tracker.clock_in else None,
+                "clock_out": tracker.clock_out.isoformat() if tracker.clock_out else None,
+                "total_work_hours": total_hours,
+                "total_work_hms": {
+                    "hours": work_hms.hours,
+                    "minutes": work_hms.minutes,
+                    "seconds": work_hms.seconds
+                },
+                "status": str(tracker.status) if tracker.status else None
+            })
+            
+            # Update totals
+            user_groups[user_id_key]["total_work_seconds"] += total_seconds
+        
+        # Convert to list and calculate final aggregations
+        grouped_data = []
+        for user_data in user_groups.values():
+            total_seconds = user_data["total_work_seconds"]
+            total_hours = round(total_seconds / 3600, 2)
+            total_work_hms = seconds_to_hms(total_seconds)
+            
+            grouped_data.append({
+                "user_id": user_data["user_id"],
+                "user_name": user_data["user_name"],
+                "user_email": user_data["user_email"],
+                "tracking_records": user_data["tracking_records"],
+                "total_days_tracked": len(user_data["tracking_records"]),
+                "total_work_hours_all_days": total_hours,
+                "total_work_hms_all_days": {
+                    "hours": total_work_hms.hours,
+                    "minutes": total_work_hms.minutes,
+                    "seconds": total_work_hms.seconds
+                }
+            })
+        
+        # Sort by user name
+        grouped_data.sort(key=lambda x: x["user_name"])
+        
+        return APIResponse.success(
+            data=grouped_data,
+            message="Grouped tracking summary retrieved successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Get grouped tracker summary error: {str(e)}")
+        return APIResponse.internal_error(message="Failed to fetch grouped tracking summary")
+
 @router.get("/tracker/hours-summary")
 async def get_tracker_hours_summary(
     start_date: Optional[date] = Query(None, description="Start date (defaults to last 30 days)"),
