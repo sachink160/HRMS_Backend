@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete
-from datetime import datetime
-from typing import List
+from sqlalchemy import select, update, delete, and_
+from datetime import datetime, date
+from typing import List, Optional
 from app.database import get_db
 from app.models import User, Holiday
 from app.schema import HolidayCreate, HolidayResponse, HolidayUpdate
@@ -67,13 +67,22 @@ async def create_holiday(
 async def get_holidays(
     offset: int = 0,
     limit: int = 10,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get all holidays."""
+    """Get all holidays with optional date range filter."""
     try:
+        query = select(Holiday)
+        
+        if start_date:
+            query = query.where(Holiday.date >= start_date)
+        if end_date:
+            query = query.where(Holiday.date <= end_date)
+            
         result = await db.execute(
-            select(Holiday)
+            query
             .offset(offset)
             .limit(limit)
             .order_by(Holiday.date.asc())
