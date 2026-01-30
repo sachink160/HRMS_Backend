@@ -2595,13 +2595,47 @@ async def get_tracker_summary_grouped(
             total_seconds = user_data["total_work_seconds"]
             total_hours = round(total_seconds / 3600, 2)
             total_work_hms = seconds_to_hms(total_seconds)
-            
+            # Only count dates with work > 0 (exclude 0-hour / active-only days from avg)
+            date_total_seconds = {}
+            for r in user_data["tracking_records"]:
+                dt = r.get("date")
+                if not dt:
+                    continue
+                hrs = r.get("total_work_hours") or 0
+                secs = int(round(hrs * 3600))
+                date_total_seconds[dt] = date_total_seconds.get(dt, 0) + secs
+            total_days_tracked = sum(1 for s in date_total_seconds.values() if s > 0)
+            user_avg = round(total_hours / total_days_tracked, 2) if total_days_tracked > 0 else 0
+            # Aggregate tracking_records by date (one row per day with summed hours)
+            by_date: Dict[str, list] = {}
+            for r in user_data["tracking_records"]:
+                dt = r.get("date")
+                if not dt:
+                    continue
+                by_date.setdefault(dt, []).append(r)
+            aggregated_records = []
+            for dt, recs in sorted(by_date.items(), reverse=True):
+                total_secs = sum(int(round((r.get("total_work_hours") or 0) * 3600)) for r in recs)
+                hrs = round(total_secs / 3600, 2)
+                hms = seconds_to_hms(total_secs)
+                clock_ins = [r.get("clock_in") for r in recs if r.get("clock_in")]
+                clock_outs = [r.get("clock_out") for r in recs if r.get("clock_out")]
+                status = str(recs[0].get("status") or "TrackerStatus.COMPLETED") if len(recs) == 1 else "Multiple sessions"
+                aggregated_records.append({
+                    "date": dt,
+                    "clock_in": min(clock_ins) if clock_ins else None,
+                    "clock_out": max(clock_outs) if clock_outs else None,
+                    "total_work_hours": hrs,
+                    "total_work_hms": {"hours": hms.hours, "minutes": hms.minutes, "seconds": hms.seconds},
+                    "status": status,
+                })
             grouped_data.append({
                 "user_id": user_data["user_id"],
                 "user_name": user_data["user_name"],
                 "user_email": user_data["user_email"],
-                "tracking_records": user_data["tracking_records"],
-                "total_days_tracked": len(user_data["tracking_records"]),
+                "user_avg": user_avg,
+                "tracking_records": aggregated_records,
+                "total_days_tracked": total_days_tracked,
                 "total_work_hours_all_days": total_hours,
                 "total_work_hms_all_days": {
                     "hours": total_work_hms.hours,

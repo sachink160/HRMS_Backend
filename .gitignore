@@ -1,4 +1,6 @@
 # Python
+dummy_data.py
+
 __pycache__/
 *.py[cod]
 *$py.class
