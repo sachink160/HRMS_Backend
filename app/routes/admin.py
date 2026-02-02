@@ -2605,7 +2605,11 @@ async def get_tracker_summary_grouped(
                 secs = int(round(hrs * 3600))
                 date_total_seconds[dt] = date_total_seconds.get(dt, 0) + secs
             total_days_tracked = sum(1 for s in date_total_seconds.values() if s > 0)
-            user_avg = round(total_hours / total_days_tracked, 2) if total_days_tracked > 0 else 0
+            # Average: only include days with >= 5 hours (exclude short/half days)
+            MIN_HOURS_FOR_AVG_SEC = 5 * 3600
+            days_for_avg = sum(1 for s in date_total_seconds.values() if s >= MIN_HOURS_FOR_AVG_SEC)
+            total_hours_for_avg = sum(s / 3600 for s in date_total_seconds.values() if s >= MIN_HOURS_FOR_AVG_SEC)
+            user_avg = round(total_hours_for_avg / days_for_avg, 2) if days_for_avg > 0 else 0
             # Aggregate tracking_records by date (one row per day with summed hours)
             by_date: Dict[str, list] = {}
             for r in user_data["tracking_records"]:
