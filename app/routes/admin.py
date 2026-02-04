@@ -15,7 +15,7 @@ from app.schema import (
     UserResponse, LeaveResponse, HolidayResponse, TrackerResponse, UserCreate,
     EmploymentHistoryResponse, EmployeeSummary, EnhancedTrackerResponse,
     EmployeeDetailsCreate, EmployeeDetailsUpdate, EmploymentHistoryCreate, AdminUserUpdate,
-    TrackerHoursSummary, TrackerDailyHours, TrackerUserHours, DurationHMS
+    TrackerHoursSummary, TrackerDailyHours, TrackerUserHours, DurationHMS, AdminPasswordReset
 )
 from app.auth import get_current_admin_user, get_password_hash
 from app.logger import log_info, log_error
@@ -526,28 +526,23 @@ async def patch_user(
         update_data = user_data.model_dump(exclude_unset=True)
         log_info(f"PATCH update data for user {user_id}: {update_data}")
         
-        # Update basic fields
-        if 'name' in update_data:
-            user.name = update_data['name']
-            log_info(f"Updated name to: {update_data['name']}")
-        if 'email' in update_data:
-            user.email = update_data['email']
-            log_info(f"Updated email to: {update_data['email']}")
-        if 'phone' in update_data:
-            user.phone = update_data['phone']
-            log_info(f"Updated phone to: {update_data['phone']}")
-        if 'designation' in update_data:
-            user.designation = update_data['designation']
-            log_info(f"Updated designation to: {update_data['designation']}")
-        if 'joining_date' in update_data:
-            user.joining_date = update_data['joining_date']
-            log_info(f"Updated joining_date to: {update_data['joining_date']}")
-        if 'wifi_user_id' in update_data:
-            user.wifi_user_id = update_data['wifi_user_id']
-            log_info(f"Updated wifi_user_id to: {update_data['wifi_user_id']}")
-        if 'role' in update_data:
-            user.role = update_data['role']
-            log_info(f"Updated role to: {update_data['role']}")
+        # Update user fields using Pydantic model (PATCH behavior - only update provided fields)
+        update_data = user_data.model_dump(exclude_unset=True)
+        log_info(f"PATCH update data for user {user_id}: {update_data}")
+        
+        # Dynamic update for all standard fields
+        # This covers all simple fields like name, email, extended details, etc.
+        # We assume the Pydantic model fields match the SQLAlchemy model attributes
+        for field, value in update_data.items():
+            # Skip fields that require special handling
+            if field in ['profile_image', 'aadhaar_front', 'aadhaar_back', 'pan_image']:
+                continue
+                
+            if hasattr(user, field):
+                setattr(user, field, value)
+                log_info(f"Updated {field} to: {value}")
+        
+        # Document updates handled separately to trigger status changes
         
         # Update document fields and set status to pending when updated
         if 'profile_image' in update_data:
@@ -584,6 +579,40 @@ async def patch_user(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to patch user: {str(e)}"
         )
+
+@router.post("/users/{user_id}/reset-password")
+async def admin_reset_user_password(
+    user_id: int,
+    password_data: AdminPasswordReset,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Admin endpoint to reset any user's password without requiring current password (admin only)."""
+    try:
+        # Get target user
+        result = await db.execute(select(User).where(User.id == user_id))
+        target_user = result.scalar_one_or_none()
+        
+        if not target_user:
+            return APIResponse.not_found(message="User not found")
+        
+        # Update password (no verification of old password needed)
+        target_user.hashed_password = get_password_hash(password_data.new_password)
+        await db.commit()
+        await db.refresh(target_user)
+        
+        log_info(f"Admin {current_user.email} reset password for user {target_user.email} (ID: {user_id})")
+        
+        return APIResponse.success(
+            data={"message": "Password reset successfully", "user_email": target_user.email},
+            message="Password reset successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Admin password reset error: {str(e)}")
+        return APIResponse.internal_error(message="Password reset failed")
 
 @router.get("/users", response_model=List[UserResponse])
 async def get_all_users(

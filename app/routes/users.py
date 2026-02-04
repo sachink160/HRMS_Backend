@@ -34,6 +34,7 @@ def user_to_dict(user: User) -> dict:
         "designation": user.designation,
         "role": user.role.value if hasattr(user.role, 'value') else str(user.role),
         "is_active": user.is_active,
+        "system_password": user.system_password,
         "profile_image": profile_image_url,
         "aadhaar_front": aadhaar_front_url,
         "aadhaar_back": aadhaar_back_url,

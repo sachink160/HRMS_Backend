@@ -2,6 +2,7 @@ from pydantic import BaseModel, EmailStr, field_validator
 from typing import Optional, List, Union
 from datetime import datetime, date, timezone
 from decimal import Decimal
+import enum
 from app.models import UserRole, LeaveStatus, DocumentStatus, TaskStatus
 
 # User Schemas
@@ -22,6 +23,7 @@ class UserUpdate(BaseModel):
     designation: Optional[str] = None
     joining_date: Optional[date] = None
     wifi_user_id: Optional[str] = None
+    system_password: Optional[str] = None
     profile_image: Optional[str] = None
     aadhaar_front: Optional[str] = None
     aadhaar_back: Optional[str] = None
@@ -72,6 +74,67 @@ class AdminUserUpdate(BaseModel):
     aadhaar_front: Optional[str] = None
     aadhaar_back: Optional[str] = None
     pan_image: Optional[str] = None
+    
+    # Employee details
+    employee_id: Optional[str] = None
+    date_of_birth: Optional[date] = None
+    gender: Optional[str] = None
+    marital_status: Optional[str] = None
+    nationality: Optional[str] = None
+    personal_email: Optional[str] = None
+    company_email: Optional[str] = None
+    company_email_password: Optional[str] = None
+    emergency_contact_name: Optional[str] = None
+    emergency_contact_phone: Optional[str] = None
+    emergency_contact_relation: Optional[str] = None
+    current_address: Optional[str] = None
+    permanent_address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    postal_code: Optional[str] = None
+    country: Optional[str] = None
+    department: Optional[str] = None
+    manager_id: Optional[int] = None
+    employment_type: Optional[str] = None
+    work_location: Optional[str] = None
+    work_schedule: Optional[str] = None
+    basic_salary: Optional[str] = None
+    currency: Optional[str] = None
+    bank_name: Optional[str] = None
+    bank_account_number: Optional[str] = None
+    ifsc_code: Optional[str] = None
+    skills: Optional[str] = None
+    certifications: Optional[str] = None
+    education_qualification: Optional[str] = None
+    previous_experience_years: Optional[int] = None
+    
+    # Probation details
+    probation_period_months: Optional[int] = None
+    probation_start_date: Optional[date] = None
+    probation_end_date: Optional[date] = None
+    probation_status: Optional[str] = None
+    probation_review_date: Optional[date] = None
+    probation_review_notes: Optional[str] = None
+    probation_reviewer_id: Optional[int] = None
+    
+    # Termination details
+    termination_date: Optional[date] = None
+    termination_reason: Optional[str] = None
+    termination_type: Optional[str] = None
+    termination_notice_period_days: Optional[int] = None
+    last_working_date: Optional[date] = None
+    termination_notes: Optional[str] = None
+    termination_initiated_by: Optional[int] = None
+    exit_interview_date: Optional[date] = None
+    exit_interview_notes: Optional[str] = None
+    clearance_status: Optional[str] = None
+    final_settlement_amount: Optional[str] = None
+    final_settlement_date: Optional[date] = None
+    
+    # Assets & Security
+    hardware_allocation: Optional[str] = None
+    system_password: Optional[str] = None
+    
     # When admin updates a file, status will be set to pending in backend
     @field_validator('joining_date')
     @classmethod
@@ -118,6 +181,17 @@ class PasswordChange(BaseModel):
             raise ValueError('Password must be at least 8 characters long')
         return v
 
+class AdminPasswordReset(BaseModel):
+    """Schema for admin to reset user password without requiring current password."""
+    new_password: str
+    
+    @field_validator('new_password')
+    @classmethod
+    def validate_new_password(cls, v):
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters long')
+        return v
+
 class UserResponse(UserBase):
     id: int
     role: UserRole
@@ -132,6 +206,65 @@ class UserResponse(UserBase):
     aadhaar_front_status: Optional[DocumentStatus] = None
     aadhaar_back_status: Optional[DocumentStatus] = None
     pan_image_status: Optional[DocumentStatus] = None
+    # Employee details
+    employee_id: Optional[str] = None
+    date_of_birth: Optional[date] = None
+    gender: Optional[str] = None
+    marital_status: Optional[str] = None
+    nationality: Optional[str] = None
+    personal_email: Optional[str] = None
+    company_email: Optional[str] = None
+    company_email_password: Optional[str] = None
+    emergency_contact_name: Optional[str] = None
+    emergency_contact_phone: Optional[str] = None
+    emergency_contact_relation: Optional[str] = None
+    current_address: Optional[str] = None
+    permanent_address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    postal_code: Optional[str] = None
+    country: Optional[str] = None
+    department: Optional[str] = None
+    manager_id: Optional[int] = None
+    employment_type: Optional[str] = None
+    work_location: Optional[str] = None
+    work_schedule: Optional[str] = None
+    basic_salary: Optional[str] = None
+    currency: Optional[str] = None
+    bank_name: Optional[str] = None
+    bank_account_number: Optional[str] = None
+    ifsc_code: Optional[str] = None
+    skills: Optional[str] = None
+    certifications: Optional[str] = None
+    education_qualification: Optional[str] = None
+    previous_experience_years: Optional[int] = None
+    
+    # Probation details
+    probation_period_months: Optional[int] = None
+    probation_start_date: Optional[date] = None
+    probation_end_date: Optional[date] = None
+    probation_status: Optional[str] = None
+    probation_review_date: Optional[date] = None
+    probation_review_notes: Optional[str] = None
+    probation_reviewer_id: Optional[int] = None
+    
+    # Termination details
+    termination_date: Optional[date] = None
+    termination_reason: Optional[str] = None
+    termination_type: Optional[str] = None
+    termination_notice_period_days: Optional[int] = None
+    last_working_date: Optional[date] = None
+    termination_notes: Optional[str] = None
+    termination_initiated_by: Optional[int] = None
+    exit_interview_date: Optional[date] = None
+    exit_interview_notes: Optional[str] = None
+    clearance_status: Optional[str] = None
+    final_settlement_amount: Optional[str] = None
+    final_settlement_date: Optional[date] = None
+    
+    # Assets & Security
+    hardware_allocation: Optional[str] = None
+    system_password: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
     
@@ -639,6 +772,18 @@ class HolidayResponse(HolidayBase):
 
 # Tracker Schemas
 class PausePeriod(BaseModel):
+    """
+    Represents a single break interval within a working day.
+
+    NOTE:
+    - The API expects ISO 8601 datetimes for both fields.
+    - When no timezone offset is provided, values are interpreted in the
+      application's business timezone (IST / Asia-Kolkata) and normalised
+      to timezone-aware datetimes on the server.
+    - For time-correction requests we always expect a *closed* interval
+      (i.e. pause_end is provided) so that work duration can be recalculated
+      deterministically.
+    """
     pause_start: datetime
     pause_end: Optional[datetime] = None
 
@@ -1170,3 +1315,146 @@ class TaskSummary(BaseModel):
     cancelled_tasks: int
     overdue_tasks: int
 
+# Password Reset Schemas
+class ForgotPasswordRequest(BaseModel):
+    """Request password reset email."""
+    email: EmailStr
+
+class VerifyResetTokenResponse(BaseModel):
+    """Response for token verification."""
+    valid: bool
+    message: str
+
+class ResetPasswordRequest(BaseModel):
+    """Reset password with token."""
+    token: str
+    new_password: str
+    
+    @field_validator('new_password')
+    @classmethod
+    def validate_new_password(cls, v):
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters long')
+        return v
+
+
+
+# Time Correction Request Schemas
+class TimeCorrectionRequestStatus(str, enum.Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+class TimeCorrectionRequestCreate(BaseModel):
+    request_date: Union[str, date]
+    issue_type: str  # missed_clock_in, missed_clock_out, wrong_time, forgot_clock_out, forgot_resume
+    
+    requested_clock_in: Optional[Union[str, datetime]] = None
+    requested_clock_out: Optional[Union[str, datetime]] = None
+    # When provided as a list from the client, this is a list of PausePeriod
+    # objects (each with pause_start and pause_end datetimes). The validator
+    # below will convert the list into a JSON string that is stored as-is on
+    # the TimeCorrectionRequest model for later use during approval.
+    requested_pause_periods: Optional[Union[List[PausePeriod], str]] = None
+    
+    reason: str
+    
+    @field_validator('request_date')
+    @classmethod
+    def validate_request_date(cls, v):
+        if isinstance(v, str):
+            try:
+                return datetime.fromisoformat(v).date()
+            except ValueError:
+                # Try common formats
+                try:
+                    return datetime.strptime(v, '%Y-%m-%d').date()
+                except ValueError:
+                    raise ValueError("Invalid request_date format")
+        return v
+    
+    @field_validator('requested_clock_in', 'requested_clock_out')
+    @classmethod
+    def validate_times(cls, v):
+        if v is None:
+            return v
+        if isinstance(v, str):
+            try:
+                dt = datetime.fromisoformat(v.replace('Z', '+00:00'))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt
+            except ValueError:
+                raise ValueError(f"Invalid datetime format: {v}")
+        if isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v
+
+    @field_validator('requested_pause_periods')
+    @classmethod
+    def validate_pause_periods(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, list):
+            import json
+            # Verify list items are PausePeriod or dicts
+            return json.dumps([p.model_dump() if hasattr(p, 'model_dump') else p for p in v], default=str)
+        if isinstance(v, str):
+            # Evaluate if it's valid JSON
+            import json
+            try:
+                json.loads(v)
+                return v
+            except ValueError:
+                raise ValueError("Invalid JSON string for pause periods")
+        return v
+
+class TimeCorrectionRequestUpdate(BaseModel):
+    status: Optional[TimeCorrectionRequestStatus] = None
+    admin_notes: Optional[str] = None
+
+class TimeCorrectionLogResponse(BaseModel):
+    id: int
+    request_id: int
+    action: str
+    performed_by: int
+    old_values: Optional[str] = None
+    new_values: Optional[str] = None
+    notes: Optional[str] = None
+    created_at: datetime
+    performer: Optional[UserResponse] = None
+    
+    class Config:
+        from_attributes = True
+
+class TimeCorrectionRequestResponse(BaseModel):
+    id: int
+    user_id: int
+    tracker_id: Optional[int] = None
+    request_date: date
+    issue_type: str
+    
+    current_clock_in: Optional[datetime] = None
+    current_clock_out: Optional[datetime] = None
+    requested_clock_in: Optional[datetime] = None
+    requested_clock_out: Optional[datetime] = None
+    
+    current_pause_periods: Optional[str] = None
+    requested_pause_periods: Optional[str] = None
+    
+    reason: str
+    status: TimeCorrectionRequestStatus
+    
+    admin_notes: Optional[str] = None
+    reviewed_by: Optional[int] = None
+    reviewed_at: Optional[datetime] = None
+    
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    
+    user: Optional[UserResponse] = None
+    reviewer: Optional[UserResponse] = None
+    logs: Optional[List[TimeCorrectionLogResponse]] = None
+    
+    class Config:
+        from_attributes = True

@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, ForeignKey, Enum, Date, Index, Numeric
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, backref
 from sqlalchemy.sql import func
 import enum
 
@@ -413,4 +413,107 @@ class Log(Base):
         Index('idx_log_user_id', 'user_id'),
         Index('idx_log_module', 'module'),
         Index('idx_log_type_created', 'log_type', 'created_at'),
+    )
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    token_hash = Column(String(255), nullable=False, unique=True, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    is_used = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    used_at = Column(DateTime(timezone=True), nullable=True)
+    
+    # Relationships
+    user = relationship("User", backref="password_reset_tokens")
+    
+    # Database indexes for performance optimization
+    __table_args__ = (
+        Index('idx_reset_token_hash', 'token_hash'),
+        Index('idx_reset_user_id', 'user_id'),
+        Index('idx_reset_expires_at', 'expires_at'),
+        Index('idx_reset_is_used', 'is_used'),
+        Index('idx_reset_user_expires', 'user_id', 'expires_at'),
+    )
+
+class TimeCorrectionRequestStatus(str, enum.Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+class TimeCorrectionRequest(Base):
+    __tablename__ = "time_correction_requests"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    tracker_id = Column(Integer, ForeignKey("time_trackers.id"), nullable=True)
+    
+    # Request details
+    request_date = Column(Date, nullable=False)
+    issue_type = Column(String(50), nullable=False)  # missed_clock_in, missed_clock_out, wrong_time, forgot_clock_out, forgot_resume
+    
+    # Time details
+    current_clock_in = Column(DateTime(timezone=True), nullable=True)
+    current_clock_out = Column(DateTime(timezone=True), nullable=True)
+    requested_clock_in = Column(DateTime(timezone=True), nullable=True)
+    requested_clock_out = Column(DateTime(timezone=True), nullable=True)
+    
+    # Pause period details (stored as JSON text)
+    current_pause_periods = Column(Text, nullable=True)
+    requested_pause_periods = Column(Text, nullable=True)
+    
+    reason = Column(Text, nullable=False)
+    status = Column(Enum(TimeCorrectionRequestStatus), default=TimeCorrectionRequestStatus.PENDING, nullable=False)
+    
+    # Admin review details
+    admin_notes = Column(Text, nullable=True)
+    reviewed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    
+    # System timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships
+    user = relationship("User", foreign_keys=[user_id], backref="time_correction_requests")
+    tracker = relationship("TimeTracker", backref="correction_requests")
+    reviewer = relationship("User", foreign_keys=[reviewed_by], backref="reviewed_corrections")
+    
+    # Indexes
+    __table_args__ = (
+        Index('idx_tc_req_user_status', 'user_id', 'status'),
+        Index('idx_tc_req_status_created', 'status', 'created_at'),
+        Index('idx_tc_req_date', 'request_date'),
+        Index('idx_tc_req_reviewer', 'reviewed_by'),
+    )
+
+class TimeCorrectionLog(Base):
+    __tablename__ = "time_correction_logs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    request_id = Column(Integer, ForeignKey("time_correction_requests.id"), nullable=False)
+    action = Column(String(50), nullable=False)  # created, approved, rejected, time_updated
+    performed_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    
+    # Data snapshot (stored as JSON text)
+    old_values = Column(Text, nullable=True)
+    new_values = Column(Text, nullable=True)
+    notes = Column(Text, nullable=True)
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
+    request = relationship(
+        "TimeCorrectionRequest",
+        backref=backref("logs", lazy="selectin")
+    )
+    performer = relationship("User", foreign_keys=[performed_by], backref="time_correction_actions")
+    
+    # Indexes
+    __table_args__ = (
+        Index('idx_tc_log_request', 'request_id'),
+        Index('idx_tc_log_performer', 'performed_by'),
+        Index('idx_tc_log_created', 'created_at'),
     )

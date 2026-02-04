@@ -137,20 +137,25 @@ async def auto_clock_out_forgotten_sessions():
             clocked_out_count = 0
             for tracker in trackers:
                 try:
-                    # Use the job run time (11:00 PM IST) for clock-out
-                    clock_out_time_utc = now_utc
-                    clock_out_time_ist = now_ist
+                    # Set clock-out to exactly 11:00 PM IST of the tracker's date
+                    # This ensures consistent behavior regardless of server timezone (local IST vs production UTC)
+                    clock_out_time_ist = datetime.combine(
+                        tracker.date,  # Use tracker's date
+                        dt_time(23, 0, 0)  # Set to 11:00 PM
+                    )
+                    clock_out_time_ist = clock_out_time_ist.replace(tzinfo=IST)
+                    clock_out_time_utc = clock_out_time_ist.astimezone(timezone.utc)
                     
                     # Log context per tracker
                     if tracker.date == yesterday_ist:
                         log_info(
-                            f"Processing previous day tracker (tracker_id {tracker.id}) - clocking out at job run time "
-                            f"{clock_out_time_ist} IST"
+                            f"Processing previous day tracker (tracker_id {tracker.id}) - clocking out at 11:00 PM IST "
+                            f"on {tracker.date} ({clock_out_time_utc} UTC)"
                         )
                     else:
                         log_info(
-                            f"Processing current day tracker (tracker_id {tracker.id}) - clocking out at job run time "
-                            f"{clock_out_time_ist} IST"
+                            f"Processing current day tracker (tracker_id {tracker.id}) - clocking out at 11:00 PM IST "
+                            f"on {tracker.date} ({clock_out_time_utc} UTC)"
                         )
                     
                     # Close any open pause periods

@@ -4,10 +4,10 @@ from sqlalchemy import select, and_, func, or_
 from sqlalchemy.orm import selectinload
 from datetime import datetime, date, timezone, timedelta
 from typing import List, Optional
-from zoneinfo import ZoneInfo
 import json
 from app.database import get_db
 from app.models import User, TimeTracker, TrackerStatus
+from app.timezone_utils import IST, ensure_timezone_aware, get_now_and_today_ist
 from app.schema import (
     TrackerResponse, TrackerCurrentResponse, TrackerSummaryResponse,
     PaginationParams, PaginatedResponse, UserResponse
@@ -17,34 +17,6 @@ from app.logger import log_info, log_error
 from app.response import APIResponse
 
 router = APIRouter(prefix="/tracker", tags=["tracker"])
-
-IST = ZoneInfo("Asia/Kolkata")
-
-def ensure_timezone_aware(dt: Optional[datetime], assume_tz: timezone = IST) -> Optional[datetime]:
-    """
-    Normalize datetime to timezone-aware (UTC by default) to prevent naive/aware subtraction errors.
-    Accepts datetime or ISO string and returns a timezone-aware datetime.
-    """
-    if dt is None:
-        return None
-    
-    if isinstance(dt, str):
-        try:
-            dt = datetime.fromisoformat(dt.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-    
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=assume_tz)
-    
-    return dt
-
-def get_now_and_today_ist():
-    # Use timezone-aware UTC to avoid implicit local conversions
-    now_utc = datetime.now(timezone.utc)
-    now_ist = now_utc.astimezone(IST)
-    today_ist = now_ist.date()
-    return now_ist, today_ist
 
 def parse_pause_periods(pause_periods_json: Optional[str]) -> List[dict]:
     """Parse pause periods JSON string to list of dicts."""
