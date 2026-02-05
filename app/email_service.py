@@ -8,6 +8,7 @@ from typing import Optional, List
 from datetime import datetime
 import logging
 from jinja2 import Template
+import os
 
 from app.models import EmailSettings, EmailLog, EmailTemplate
 from app.logger import log_info, log_error
@@ -18,23 +19,65 @@ class EmailService:
     def __init__(self):
         self.settings: Optional[EmailSettings] = None
         self.templates: dict = {}
+        self.using_env_settings = False
     
     async def load_settings(self, db: AsyncSession) -> bool:
-        """Load email settings from database."""
+        """Load email settings from database or environment variables."""
         try:
+            # Try to load from database first
             result = await db.execute(
                 select(EmailSettings).where(EmailSettings.is_active == True)
             )
             self.settings = result.scalar_one_or_none()
             
             if self.settings:
-                log_info("Email settings loaded successfully")
+                self.using_env_settings = False
+                log_info("Email settings loaded from database")
                 return True
             else:
-                log_error("No active email settings found")
-                return False
+                # Fallback to environment variables
+                log_info("No database settings found, checking environment variables...")
+                return self._load_from_env()
+                
         except Exception as e:
             log_error(f"Failed to load email settings: {str(e)}")
+            # Try env variables as fallback
+            return self._load_from_env()
+    
+    def _load_from_env(self) -> bool:
+        """Load email settings from environment variables."""
+        try:
+            smtp_server = os.getenv("SMTP_SERVER")
+            smtp_port = os.getenv("SMTP_PORT")
+            smtp_username = os.getenv("SMTP_USERNAME")
+            smtp_password = os.getenv("SMTP_PASSWORD")
+            from_email = os.getenv("FROM_EMAIL")
+            from_name = os.getenv("FROM_NAME", "HRMS System")
+            
+            if not all([smtp_server, smtp_port, smtp_username, smtp_password, from_email]):
+                log_error("Missing required environment variables for email configuration")
+                return False
+            
+            # Create a settings-like object from env variables
+            class EnvEmailSettings:
+                def __init__(self):
+                    self.smtp_server = smtp_server
+                    self.smtp_port = int(smtp_port)
+                    self.smtp_username = smtp_username
+                    self.smtp_password = smtp_password
+                    self.smtp_use_tls = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
+                    self.smtp_use_ssl = os.getenv("SMTP_USE_SSL", "false").lower() == "true"
+                    self.from_email = from_email
+                    self.from_name = from_name
+                    self.is_active = True
+            
+            self.settings = EnvEmailSettings()
+            self.using_env_settings = True
+            log_info("Email settings loaded from environment variables")
+            return True
+            
+        except Exception as e:
+            log_error(f"Failed to load email settings from environment: {str(e)}")
             return False
     
     async def load_templates(self, db: AsyncSession) -> bool:
@@ -58,16 +101,22 @@ class EmailService:
             return False
         
         try:
-            # Simplified approach - let aiosmtplib handle TLS automatically
-            smtp = aiosmtplib.SMTP(
-                hostname=self.settings.smtp_server,
-                port=self.settings.smtp_port,
-                use_tls=self.settings.smtp_use_tls and not self.settings.smtp_use_ssl
-            )
-            
-            if self.settings.smtp_use_ssl:
-                await smtp.connect(use_ssl=True)
+            # For port 587 (STARTTLS), connect without TLS first, then upgrade
+            # For port 465 (SSL/TLS), use SSL from the start
+            if self.settings.smtp_use_ssl and self.settings.smtp_port == 465:
+                # Direct SSL connection (port 465)
+                smtp = aiosmtplib.SMTP(
+                    hostname=self.settings.smtp_server,
+                    port=self.settings.smtp_port
+                )
+                await smtp.connect(use_tls=True)
             else:
+                # STARTTLS connection (port 587)
+                smtp = aiosmtplib.SMTP(
+                    hostname=self.settings.smtp_server,
+                    port=self.settings.smtp_port,
+                    start_tls=self.settings.smtp_use_tls
+                )
                 await smtp.connect()
             
             await smtp.login(self.settings.smtp_username, self.settings.smtp_password)
@@ -136,16 +185,21 @@ class EmailService:
             # Add body
             message.attach(MIMEText(body, 'html'))
             
-            # Send email - simplified approach
-            smtp = aiosmtplib.SMTP(
-                hostname=self.settings.smtp_server,
-                port=self.settings.smtp_port,
-                use_tls=self.settings.smtp_use_tls and not self.settings.smtp_use_ssl
-            )
-            
-            if self.settings.smtp_use_ssl:
-                await smtp.connect(use_ssl=True)
+            # Send email with proper SSL/TLS handling
+            if self.settings.smtp_use_ssl and self.settings.smtp_port == 465:
+                # Direct SSL connection (port 465)
+                smtp = aiosmtplib.SMTP(
+                    hostname=self.settings.smtp_server,
+                    port=self.settings.smtp_port
+                )
+                await smtp.connect(use_tls=True)
             else:
+                # STARTTLS connection (port 587)
+                smtp = aiosmtplib.SMTP(
+                    hostname=self.settings.smtp_server,
+                    port=self.settings.smtp_port,
+                    start_tls=self.settings.smtp_use_tls
+                )
                 await smtp.connect()
             
             await smtp.login(self.settings.smtp_username, self.settings.smtp_password)

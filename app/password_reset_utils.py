@@ -16,7 +16,7 @@ from app.logger import log_info, log_error
 # Configuration
 RESET_TOKEN_EXPIRY_MINUTES = 30
 RESET_TOKEN_LENGTH = 32
-MAX_RESET_REQUESTS_PER_HOUR = 3
+MAX_RESET_REQUESTS_PER_HOUR = 10  # Increased for testing/development
 
 
 def generate_reset_token() -> str:
@@ -112,7 +112,14 @@ async def verify_reset_token(db: AsyncSession, token: str) -> Tuple[bool, Option
             return False, None, "This reset link has already been used"
         
         # Check if token is expired
-        if datetime.now(timezone.utc) > reset_token.expires_at:
+        current_time = datetime.now(timezone.utc)
+        token_expires_at = reset_token.expires_at
+        
+        # If the database datetime is naive, make it aware (UTC)
+        if token_expires_at.tzinfo is None:
+            token_expires_at = token_expires_at.replace(tzinfo=timezone.utc)
+        
+        if current_time > token_expires_at:
             return False, None, "This reset link has expired"
         
         # Get user
@@ -192,7 +199,19 @@ async def check_rate_limit(db: AsyncSession, user_id: int) -> bool:
         )
         tokens = result.scalars().all()
         
-        if len(tokens) >= MAX_RESET_REQUESTS_PER_HOUR:
+        # Handle timezone-naive datetimes from database
+        # Count tokens created within the last hour
+        recent_count = 0
+        for token in tokens:
+            token_created_at = token.created_at
+            # If naive, assume UTC
+            if token_created_at.tzinfo is None:
+                token_created_at = token_created_at.replace(tzinfo=timezone.utc)
+            
+            if token_created_at >= one_hour_ago:
+                recent_count += 1
+        
+        if recent_count >= MAX_RESET_REQUESTS_PER_HOUR:
             log_info(f"Rate limit exceeded for user_id: {user_id}")
             return False
         

@@ -60,10 +60,66 @@ async def create_time_correction_request(
     )
     tracker = result.scalars().first()
     
+    # If tracker_id is provided in the request, use that specific tracker
+    # Otherwise, use the first one found (backward compatibility)
+    if hasattr(request, 'tracker_id') and request.tracker_id:
+        result = await db.execute(
+            select(TimeTracker).where(
+                TimeTracker.id == request.tracker_id,
+                TimeTracker.user_id == current_user.id
+            )
+        )
+        tracker = result.scalars().first()
+        if not tracker:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Specified tracker entry not found"
+            )
+    
+    # Fetch ALL tracker entries for this date to check for overlaps
+    result = await db.execute(
+        select(TimeTracker).where(
+            TimeTracker.user_id == current_user.id,
+            TimeTracker.date == request.request_date
+        ).order_by(TimeTracker.clock_in)
+    )
+    all_trackers = result.scalars().all()
+    
+    # Validate time overlap if we have requested times
+    if request.requested_clock_in and request.requested_clock_out and len(all_trackers) > 1:
+        requested_in = ensure_timezone_aware(request.requested_clock_in)
+        requested_out = ensure_timezone_aware(request.requested_clock_out)
+        
+        # Get the tracker_id we're correcting (if any)
+        correcting_tracker_id = getattr(request, 'tracker_id', None) or (tracker.id if tracker else None)
+        
+        # Check for overlaps with other trackers
+        for other_tracker in all_trackers:
+            # Skip the tracker we're correcting
+            if correcting_tracker_id and other_tracker.id == correcting_tracker_id:
+                continue
+                
+            if other_tracker.clock_out:
+                other_start = ensure_timezone_aware(other_tracker.clock_in)
+                other_end = ensure_timezone_aware(other_tracker.clock_out)
+                
+                # Check for overlap: requested_in < other_end AND requested_out > other_start
+                if requested_in < other_end and requested_out > other_start:
+                    # Format times for error message
+                    conflict_start = other_start.strftime("%I:%M %p")
+                    conflict_end = other_end.strftime("%I:%M %p")
+                    requested_start_str = requested_in.strftime("%I:%M %p")
+                    requested_end_str = requested_out.strftime("%I:%M %p")
+                    
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Time conflict detected: Your requested time ({requested_start_str} - {requested_end_str}) overlaps with another tracker entry ({conflict_start} - {conflict_end}). Please adjust your times to avoid overlap."
+                    )
+    
     # Create request object
     new_request = TimeCorrectionRequest(
         user_id=current_user.id,
-        tracker_id=tracker.id if tracker else None,
+        tracker_id=getattr(request, 'tracker_id', None) or (tracker.id if tracker else None),
         request_date=request.request_date,
         issue_type=request.issue_type,
         requested_clock_in=request.requested_clock_in,
@@ -94,12 +150,37 @@ async def create_time_correction_request(
 
         tracker_clock_in = ensure_timezone_aware(tracker.clock_in) if tracker and tracker.clock_in else None
         tracker_clock_out = ensure_timezone_aware(tracker.clock_out) if tracker and tracker.clock_out else None
-
+        
         # Determine effective clock window (prefer requested values, fall back to tracker)
+        # For separate missed_clock_in/out (legacy) or unified missed_punch
         effective_clock_in = normalized_requested_in or tracker_clock_in
         effective_clock_out = normalized_requested_out or tracker_clock_out
 
+        # Validation for missed_punch: Must have at least one valid clock time (and valid range if both exist)
+        if request.issue_type == 'missed_punch':
+            if not effective_clock_in and not effective_clock_out:
+                 raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="For Missed Punch, you must provide either a Clock In time or a Clock Out time."
+                )
+
         if not (effective_clock_in and effective_clock_out):
+            # If we are just correcting one side and the other doesn't exist yet (e.g. fresh day correction)?
+            # Actually, standard logic requires both to validate breaks IN BETWEEN.
+            # If we don't have both, we can't strict validate breaks fully, OR we skip break validation if breaks aren't being touched?
+            # But here `request.requested_pause_periods` IS truthy, so user IS trying to modify breaks (or sending them back).
+            pass 
+            # We will raise error if we can't establish a window to validate breaks against
+            # BUT: if it's a 'missed_punch' creating a brand new day (no tracker), and they provide breaks?
+            # They should provide both IN and OUT if they want to validate breaks.
+            
+            if request.issue_type == 'missed_punch' and (not effective_clock_in or not effective_clock_out):
+                 # If user provides breaks, they must provide the full window
+                 raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="To validate pause periods, both Clock In and Clock Out times are required."
+                 )
+            
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Cannot validate break periods without both clock in and clock out times."

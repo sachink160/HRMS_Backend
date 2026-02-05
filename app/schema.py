@@ -1348,6 +1348,7 @@ class TimeCorrectionRequestStatus(str, enum.Enum):
 class TimeCorrectionRequestCreate(BaseModel):
     request_date: Union[str, date]
     issue_type: str  # missed_clock_in, missed_clock_out, wrong_time, forgot_clock_out, forgot_resume
+    tracker_id: Optional[int] = None  # Specific tracker ID to correct (when multiple entries exist for same date)
     
     requested_clock_in: Optional[Union[str, datetime]] = None
     requested_clock_out: Optional[Union[str, datetime]] = None

@@ -462,5 +462,46 @@ async def get_my_history(
         log_error(f"Get history error: {str(e)}")
         return APIResponse.internal_error(message="Failed to fetch tracking history")
 
+@router.get("/by-date")
+async def get_trackers_by_date(
+    date_param: date = Query(..., alias="date", description="Date to fetch trackers for (YYYY-MM-DD)"),
+    user_id: Optional[int] = Query(None, description="User ID (optional, admin use)"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get all tracker entries for a specific date.
+    Useful for time correction when multiple entries exist for the same day.
+    """
+    try:
+        # If user_id is provided and user is not admin, only allow fetching own data
+        target_user_id = user_id if user_id and current_user.role.value == "admin" else current_user.id
+        
+        # Fetch all trackers for the given date
+        query = select(TimeTracker).where(
+            and_(
+                TimeTracker.user_id == target_user_id,
+                TimeTracker.date == date_param
+            )
+        ).order_by(TimeTracker.clock_in.asc())
+        
+        result = await db.execute(query)
+        trackers = result.scalars().all()
+        
+        trackers_data = [tracker_to_dict(tracker) for tracker in trackers]
+        
+        log_info(f"Fetched {len(trackers_data)} tracker(s) for user {target_user_id} on {date_param}")
+        
+        return APIResponse.success(
+            data=trackers_data,
+            message=f"Found {len(trackers_data)} tracker entry(ies) for the selected date"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Get trackers by date error: {str(e)}", exc_info=e)
+        return APIResponse.internal_error(message="Failed to fetch trackers for the specified date")
+
 # Admin endpoints moved to admin.py router at /admin/tracker/*
 
