@@ -17,7 +17,7 @@ from app.schema import (
 )
 from app.routes.auth import get_current_user, get_current_admin_user
 from app.logger import log_info, log_error
-from app.timezone_utils import ensure_timezone_aware, IST
+from app.timezone_utils import ensure_timezone_aware
 
 router = APIRouter(
     prefix="/time-corrections",
@@ -87,9 +87,8 @@ async def create_time_correction_request(
     
     # Validate time overlap if we have requested times
     if request.requested_clock_in and request.requested_clock_out and len(all_trackers) > 1:
-        # Ensure requested times are timezone-aware and convert to IST
-        requested_in = ensure_timezone_aware(request.requested_clock_in).astimezone(IST)
-        requested_out = ensure_timezone_aware(request.requested_clock_out).astimezone(IST)
+        requested_in = ensure_timezone_aware(request.requested_clock_in)
+        requested_out = ensure_timezone_aware(request.requested_clock_out)
         
         # Get the tracker_id we're correcting (if any)
         correcting_tracker_id = getattr(request, 'tracker_id', None) or (tracker.id if tracker else None)
@@ -101,13 +100,12 @@ async def create_time_correction_request(
                 continue
                 
             if other_tracker.clock_out:
-                # Convert database times (UTC) to IST for accurate comparison
-                other_start = ensure_timezone_aware(other_tracker.clock_in).astimezone(IST)
-                other_end = ensure_timezone_aware(other_tracker.clock_out).astimezone(IST)
+                other_start = ensure_timezone_aware(other_tracker.clock_in)
+                other_end = ensure_timezone_aware(other_tracker.clock_out)
                 
                 # Check for overlap: requested_in < other_end AND requested_out > other_start
                 if requested_in < other_end and requested_out > other_start:
-                    # Format times for error message (all times now in IST)
+                    # Format times for error message
                     conflict_start = other_start.strftime("%I:%M %p")
                     conflict_end = other_end.strftime("%I:%M %p")
                     requested_start_str = requested_in.strftime("%I:%M %p")
@@ -133,8 +131,8 @@ async def create_time_correction_request(
 
     # Early validation: Check if clock-out is before clock-in
     if request.requested_clock_in and request.requested_clock_out:
-        normalized_in = ensure_timezone_aware(request.requested_clock_in).astimezone(IST)
-        normalized_out = ensure_timezone_aware(request.requested_clock_out).astimezone(IST)
+        normalized_in = ensure_timezone_aware(request.requested_clock_in)
+        normalized_out = ensure_timezone_aware(request.requested_clock_out)
         
         if normalized_out <= normalized_in:
             raise HTTPException(
@@ -146,13 +144,12 @@ async def create_time_correction_request(
     # For 'forgot_resume', the user is defining a complete new timeline, so we just validate basic sanity.
     # For other issue types, we validate that breaks lie within the corrected clock-in/out window.
     if request.requested_pause_periods and request.issue_type != 'forgot_resume':
-        # Normalize requested clock times to timezone-aware IST
-        normalized_requested_in = ensure_timezone_aware(request.requested_clock_in).astimezone(IST) if request.requested_clock_in else None
-        normalized_requested_out = ensure_timezone_aware(request.requested_clock_out).astimezone(IST) if request.requested_clock_out else None
+        # Normalize requested clock times to timezone-aware (IST by default)
+        normalized_requested_in = ensure_timezone_aware(request.requested_clock_in)
+        normalized_requested_out = ensure_timezone_aware(request.requested_clock_out)
 
-        # Convert tracker times from UTC to IST
-        tracker_clock_in = ensure_timezone_aware(tracker.clock_in).astimezone(IST) if tracker and tracker.clock_in else None
-        tracker_clock_out = ensure_timezone_aware(tracker.clock_out).astimezone(IST) if tracker and tracker.clock_out else None
+        tracker_clock_in = ensure_timezone_aware(tracker.clock_in) if tracker and tracker.clock_in else None
+        tracker_clock_out = ensure_timezone_aware(tracker.clock_out) if tracker and tracker.clock_out else None
         
         # Determine effective clock window (prefer requested values, fall back to tracker)
         # For separate missed_clock_in/out (legacy) or unified missed_punch
@@ -219,9 +216,9 @@ async def create_time_correction_request(
                     detail="Pause period datetimes must be valid ISO 8601 strings."
                 )
 
-            # Normalise parsed pause datetimes to timezone-aware IST
-            s_dt = ensure_timezone_aware(s_raw).astimezone(IST)
-            e_dt = ensure_timezone_aware(e_raw).astimezone(IST)
+            # Normalise parsed pause datetimes to timezone-aware (IST by default).
+            s_dt = ensure_timezone_aware(s_raw)
+            e_dt = ensure_timezone_aware(e_raw)
 
             if e_dt < s_dt:
                 raise HTTPException(
@@ -273,9 +270,9 @@ async def create_time_correction_request(
                     detail="Pause period datetimes must be valid ISO 8601 strings."
                 )
 
-            # Just validate that end is after start (normalize to IST)
-            s_dt = ensure_timezone_aware(s_raw).astimezone(IST)
-            e_dt = ensure_timezone_aware(e_raw).astimezone(IST)
+            # Just validate that end is after start
+            s_dt = ensure_timezone_aware(s_raw)
+            e_dt = ensure_timezone_aware(e_raw)
 
             if e_dt <= s_dt:
                 raise HTTPException(
