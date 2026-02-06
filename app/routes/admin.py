@@ -2850,3 +2850,42 @@ async def get_tracker_hours_by_user(
     except Exception as e:
         log_error(f"Get tracker hours by user error: {str(e)}")
         return APIResponse.internal_error(message="Failed to fetch tracker hours by user")
+
+@router.delete("/tracker/{tracker_id}")
+async def admin_delete_tracker(
+    tracker_id: int,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Delete a tracker entry (admin can delete any tracker)."""
+    try:
+        # Fetch the tracker
+        result = await db.execute(
+            select(TimeTracker).where(TimeTracker.id == tracker_id)
+        )
+        tracker = result.scalar_one_or_none()
+        
+        if not tracker:
+            return APIResponse.not_found(message="Tracker entry not found")
+        
+        # Admin can delete any tracker, so no ownership check needed
+        tracker_info = f"tracker {tracker_id} (user_id: {tracker.user_id}, date: {tracker.date})"
+        
+        # Delete the tracker
+        await db.delete(tracker)
+        await db.commit()
+        
+        log_info(f"Admin {current_user.email} deleted {tracker_info}")
+        
+        return APIResponse.success(
+            data={"id": tracker_id},
+            message="Tracker entry deleted successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Admin delete tracker error: {str(e)}")
+        await db.rollback()
+        return APIResponse.internal_error(message="Failed to delete tracker entry")
+

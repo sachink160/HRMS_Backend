@@ -503,5 +503,45 @@ async def get_trackers_by_date(
         log_error(f"Get trackers by date error: {str(e)}", exc_info=e)
         return APIResponse.internal_error(message="Failed to fetch trackers for the specified date")
 
+@router.delete("/{tracker_id}")
+async def delete_tracker(
+    tracker_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Delete a tracker entry (user can only delete their own entries)."""
+    try:
+        # Fetch the tracker
+        result = await db.execute(
+            select(TimeTracker).where(TimeTracker.id == tracker_id)
+        )
+        tracker = result.scalar_one_or_none()
+        
+        if not tracker:
+            return APIResponse.not_found(message="Tracker entry not found")
+        
+        # Check if the tracker belongs to the current user
+        if tracker.user_id != current_user.id:
+            return APIResponse.forbidden(message="You can only delete your own tracker entries")
+        
+        # Delete the tracker
+        await db.delete(tracker)
+        await db.commit()
+        
+        log_info(f"User {current_user.email} deleted tracker {tracker_id}")
+        
+        return APIResponse.success(
+            data={"id": tracker_id},
+            message="Tracker entry deleted successfully"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error(f"Delete tracker error: {str(e)}")
+        await db.rollback()
+        return APIResponse.internal_error(message="Failed to delete tracker entry")
+
 # Admin endpoints moved to admin.py router at /admin/tracker/*
+
 
